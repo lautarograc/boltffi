@@ -22,3 +22,13 @@ pub extern "C" fn mffi_version_minor() -> u32 {
 pub extern "C" fn mffi_version_patch() -> u32 {
     VERSION_PATCH
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mffi_free_buf_u8(buf: FfiBuf<u8>) {
+    drop(buf);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mffi_free_string(string: FfiString) {
+    drop(string);
+}
