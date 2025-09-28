@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use crate::ringbuffer::SpscRingBuffer;
@@ -173,15 +173,66 @@ pub unsafe fn subscription_free<T: Send + 'static>(handle: SubscriptionHandle) {
     drop(subscription);
 }
 
-pub struct StreamProducer<T: Send + Copy + 'static> {
-    active_subscriptions: Mutex<Vec<Weak<EventSubscription<T>>>>,
+struct SubscriberSlot<T: Send + 'static> {
+    subscription_ptr: AtomicPtr<EventSubscription<T>>,
+}
+
+impl<T: Send + 'static> SubscriberSlot<T> {
+    const fn empty() -> Self {
+        Self {
+            subscription_ptr: AtomicPtr::new(std::ptr::null_mut()),
+        }
+    }
+
+    fn try_claim(&self, subscription: &Arc<EventSubscription<T>>) -> bool {
+        let raw_ptr = Arc::as_ptr(subscription) as *mut EventSubscription<T>;
+        self.subscription_ptr
+            .compare_exchange(
+                std::ptr::null_mut(),
+                raw_ptr,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    fn load_subscription(&self) -> Option<*const EventSubscription<T>> {
+        let ptr = self.subscription_ptr.load(Ordering::Acquire);
+        (!ptr.is_null()).then_some(ptr)
+    }
+
+    fn clear_if_inactive(&self) {
+        let ptr = self.subscription_ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return;
+        }
+
+        let is_active = unsafe { (*ptr).is_active() };
+        if !is_active {
+            self.subscription_ptr
+                .compare_exchange(ptr, std::ptr::null_mut(), Ordering::AcqRel, Ordering::Acquire)
+                .ok();
+        }
+    }
+
+    fn is_occupied(&self) -> bool {
+        let ptr = self.subscription_ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return false;
+        }
+        unsafe { (*ptr).is_active() }
+    }
+}
+
+pub struct StreamProducer<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize = 32> {
+    subscriber_slots: [SubscriberSlot<T>; MAX_SUBSCRIBERS],
     default_capacity: usize,
 }
 
-impl<T: Send + Copy + 'static> StreamProducer<T> {
+impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, MAX_SUBSCRIBERS> {
     pub fn new(default_capacity: usize) -> Self {
         Self {
-            active_subscriptions: Mutex::new(Vec::new()),
+            subscriber_slots: core::array::from_fn(|_| SubscriberSlot::empty()),
             default_capacity,
         }
     }
@@ -192,40 +243,48 @@ impl<T: Send + Copy + 'static> StreamProducer<T> {
 
     pub fn subscribe_with_capacity(&self, capacity: usize) -> Arc<EventSubscription<T>> {
         let subscription = Arc::new(EventSubscription::new(capacity));
-        self.active_subscriptions
-            .lock()
-            .unwrap()
-            .push(Arc::downgrade(&subscription));
+
+        self.subscriber_slots.iter().for_each(|slot| slot.clear_if_inactive());
+
+        let slot_claimed = self
+            .subscriber_slots
+            .iter()
+            .any(|slot| slot.try_claim(&subscription));
+
+        if !slot_claimed {
+            eprintln!("StreamProducer: all {} subscriber slots full", MAX_SUBSCRIBERS);
+        }
+
         subscription
     }
 
     pub fn push(&self, event: T) {
-        let mut subscriptions = self.active_subscriptions.lock().unwrap();
-        subscriptions.retain(|weak_subscription| {
-            weak_subscription
-                .upgrade()
-                .map(|subscription| {
+        self.subscriber_slots.iter().for_each(|slot| {
+            if let Some(subscription_ptr) = slot.load_subscription() {
+                let subscription = unsafe { &*subscription_ptr };
+                if subscription.is_active() {
                     subscription.push_event(event);
-                    true
-                })
-                .unwrap_or(false)
+                }
+            }
         });
     }
 
     pub fn subscriber_count(&self) -> usize {
-        let subscriptions = self.active_subscriptions.lock().unwrap();
-        subscriptions
+        self.subscriber_slots
             .iter()
-            .filter(|weak| weak.strong_count() > 0)
+            .filter(|slot| slot.is_occupied())
             .count()
     }
 }
 
-impl<T: Send + Copy + 'static> Default for StreamProducer<T> {
+impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> Default for StreamProducer<T, MAX_SUBSCRIBERS> {
     fn default() -> Self {
         Self::new(256)
     }
 }
+
+unsafe impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> Send for StreamProducer<T, MAX_SUBSCRIBERS> {}
+unsafe impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> Sync for StreamProducer<T, MAX_SUBSCRIBERS> {}
 
 #[cfg(test)]
 mod tests {
