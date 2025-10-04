@@ -143,4 +143,18 @@ mod tests {
         let output = Swift::params_declaration(&params);
         assert_eq!(output, "sampleCount: UInt32, threshold: Double");
     }
+
+    #[test]
+    fn test_swift_class_generation() {
+        let module = create_test_module();
+        let class = module.find_class("Sensor").unwrap();
+        let output = Swift::render_class(class, &module);
+
+        assert!(output.contains("public final class Sensor"));
+        assert!(output.contains("let handle: OpaquePointer"));
+        assert!(output.contains("func getReading()"));
+        assert!(output.contains("func predictNext("));
+        assert!(output.contains("async"));
+        assert!(output.contains("deinit"));
+    }
 }

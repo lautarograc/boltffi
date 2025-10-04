@@ -1,11 +1,15 @@
 mod body;
 mod names;
+mod templates;
 mod types;
+
+use askama::Template;
 
 use crate::model::{Class, Enumeration, Method, Module, Parameter, Record, StreamMethod};
 
 pub use body::BodyRenderer;
 pub use names::NamingConvention;
+pub use templates::{ClassTemplate, CStyleEnumTemplate, DataEnumTemplate, RecordTemplate};
 pub use types::TypeMapper;
 
 pub struct Swift;
@@ -75,10 +79,26 @@ impl Swift {
     }
 
     pub fn render_record(record: &Record) -> String {
-        BodyRenderer::render_record(record)
+        RecordTemplate::from_record(record)
+            .render()
+            .expect("record template failed")
     }
 
     pub fn render_enum(enumeration: &Enumeration) -> String {
-        BodyRenderer::render_enum(enumeration)
+        if enumeration.is_c_style() {
+            CStyleEnumTemplate::from_enum(enumeration)
+                .render()
+                .expect("c-style enum template failed")
+        } else {
+            DataEnumTemplate::from_enum(enumeration)
+                .render()
+                .expect("data enum template failed")
+        }
+    }
+
+    pub fn render_class(class: &Class, module: &Module) -> String {
+        ClassTemplate::from_class(class, module)
+            .render()
+            .expect("class template failed")
     }
 }
