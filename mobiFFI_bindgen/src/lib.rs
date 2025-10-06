@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn test_module_ffi_prefix() {
         let module = create_test_module();
-        assert_eq!(module.ffi_prefix(), "mffi_sensors");
+        assert_eq!(module.ffi_prefix(), "mffi");
     }
 
     #[test]
@@ -61,8 +61,8 @@ mod tests {
         let class = module.find_class("Sensor").unwrap();
         let prefix = module.ffi_prefix();
 
-        assert_eq!(class.ffi_new(&prefix), "mffi_sensors_sensor_new");
-        assert_eq!(class.ffi_free(&prefix), "mffi_sensors_sensor_free");
+        assert_eq!(class.ffi_new(&prefix), "mffi_sensor_new");
+        assert_eq!(class.ffi_free(&prefix), "mffi_sensor_free");
     }
 
     #[test]
@@ -72,8 +72,8 @@ mod tests {
         let class_prefix = class.ffi_prefix(&module.ffi_prefix());
         let method = class.methods.iter().find(|m| m.name == "predict_next").unwrap();
 
-        assert_eq!(method.ffi_name(&class_prefix), "mffi_sensors_sensor_predict_next");
-        assert_eq!(method.ffi_poll(&class_prefix), "mffi_sensors_sensor_predict_next_poll");
+        assert_eq!(method.ffi_name(&class_prefix), "mffi_sensor_predict_next");
+        assert_eq!(method.ffi_poll(&class_prefix), "mffi_sensor_predict_next_poll");
     }
 
     #[test]

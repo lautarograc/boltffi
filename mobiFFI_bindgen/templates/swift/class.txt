@@ -1,49 +1,48 @@
-{% if let Some(doc) = doc %}
+{%- if let Some(doc) = doc %}
 /// {{ doc }}
-{% endif %}
-{% if deprecated %}
+{%- endif %}
+{%- if deprecated %}
 @available(*, deprecated{% if let Some(msg) = deprecated_message %}, message: "{{ msg }}"{% endif %})
-{% endif %}
+{%- endif %}
 public final class {{ class_name }} {
     let handle: OpaquePointer
 
     init(handle: OpaquePointer) {
         self.handle = handle
     }
-{% for ctor in constructors %}
-
-{% if let Some(doc) = ctor.doc %}
+{%- for ctor in constructors %}
+{%- if let Some(doc) = ctor.doc %}
     /// {{ doc }}
-{% endif %}
-    public{% if ctor.is_failable %} convenience{% endif %} init({% for param in ctor.params %}{{ param.swift_name }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_failable %}?{% endif %} {
-        {% if ctor.is_failable %}guard let {% else %}let {% endif %}ptr = {{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_failable %} else { return nil }{% endif %}
+{%- endif %}
 
+    public init({% for param in ctor.params %}{{ param.swift_name }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}) {
+        let ptr = {{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %})
         self.init(handle: ptr)
     }
-{% endfor %}
+{%- endfor %}
 
     deinit {
         {{ ffi_free }}(handle)
     }
-{% for method in methods %}
-
-{% if let Some(doc) = method.doc %}
+{%- for method in methods %}
+{%- if let Some(doc) = method.doc %}
     /// {{ doc }}
-{% endif %}
-{% if method.deprecated %}
+{%- endif %}
+{%- if method.deprecated %}
     @available(*, deprecated{% if let Some(msg) = method.deprecated_message %}, message: "{{ msg }}"{% endif %})
-{% endif %}
-    public{% if method.is_static %} static{% endif %} func {{ method.swift_name }}({% for param in method.params %}{{ param.swift_name }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.is_async %} async{% endif %}{% if method.throws %} throws{% endif %}{% if let Some(ret) = method.return_type %} -> {{ ret }}{% endif %} {
-{{ method.body|indent(8) }}
-    }
-{% endfor %}
-{% for stream in streams %}
+{%- endif %}
 
-{% if let Some(doc) = stream.doc %}
-    /// {{ doc }}
-{% endif %}
-    public func {{ stream.swift_name }}() -> AsyncStream<{{ stream.item_type }}> {
-{{ stream.body|indent(8) }}
+    public{% if method.is_static %} static{% endif %} func {{ method.swift_name }}({% for param in method.params %}{{ param.swift_name }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.is_async %} async{% endif %}{% if method.throws %} throws{% endif %}{% if let Some(ret) = method.return_type %} -> {{ ret }}{% endif %} {
+        {{ method.body }}
     }
-{% endfor %}
+{%- endfor %}
+{%- for stream in streams %}
+{%- if let Some(doc) = stream.doc %}
+    /// {{ doc }}
+{%- endif %}
+
+    public func {{ stream.swift_name }}() -> AsyncStream<{{ stream.item_type }}> {
+        {{ stream.body }}
+    }
+{%- endfor %}
 }

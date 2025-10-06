@@ -1,11 +1,11 @@
 public struct {{ class_name }}: Equatable {
-{% for field in fields %}
+{%- for field in fields %}
     public var {{ field.swift_name }}: {{ field.swift_type }}
-{% endfor %}
+{%- endfor %}
 
     public init({% for field in fields %}{{ field.swift_name }}: {{ field.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}) {
-{% for field in fields %}
+{%- for field in fields %}
         self.{{ field.swift_name }} = {{ field.swift_name }}
-{% endfor %}
+{%- endfor %}
     }
 }

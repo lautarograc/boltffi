@@ -1,5 +1,5 @@
 public enum {{ class_name }}: Int32 {
-{% for variant in variants %}
+{%- for variant in variants %}
     case {{ variant.swift_name }} = {{ variant.discriminant }}
-{% endfor %}
+{%- endfor %}
 }

@@ -26,7 +26,7 @@ impl Module {
     }
 
     pub fn ffi_prefix(&self) -> String {
-        format!("mffi_{}", self.name.to_lowercase())
+        "mffi".to_string()
     }
 
     pub fn with_class(mut self, class: Class) -> Self {
