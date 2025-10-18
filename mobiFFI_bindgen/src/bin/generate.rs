@@ -65,9 +65,9 @@ fn main() {
         module.records.len()
     );
 
-    let metadata_dir = PathBuf::from("target/bindgen");
+    let metadata_dir = PathBuf::from("target").join(&module_name);
     fs::create_dir_all(&metadata_dir).expect("Failed to create metadata directory");
-    let metadata_path = metadata_dir.join(format!("{}.json", module_name));
+    let metadata_path = metadata_dir.join("metadata.json");
     let metadata_json =
         serde_json::to_string_pretty(&module).expect("Failed to serialize module to JSON");
     fs::write(&metadata_path, &metadata_json).expect("Failed to write metadata JSON");
