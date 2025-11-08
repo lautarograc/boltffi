@@ -273,6 +273,10 @@ impl SourceScanner {
                     continue;
                 }
 
+                if has_attribute(&method.attrs, "skip") {
+                    continue;
+                }
+
                 if has_attribute(&method.attrs, "ffi_stream") {
                     if let Some(stream) = self.process_stream_method(method) {
                         class.streams.push(stream);

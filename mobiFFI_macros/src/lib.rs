@@ -1302,6 +1302,9 @@ pub fn ffi_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .filter_map(|item| {
             if let syn::ImplItem::Fn(method) = item {
+                if method.attrs.iter().any(|a| a.path().is_ident("skip")) {
+                    return None;
+                }
                 if matches!(method.vis, syn::Visibility::Public(_)) {
                     if let Some(item_type) = extract_ffi_stream_item(&method.attrs) {
                         return Some(generate_stream_exports(
@@ -2025,4 +2028,80 @@ fn rust_type_to_ffi_param_type(ty: &syn::Type) -> proc_macro2::TokenStream {
         "String" => quote!(*const std::os::raw::c_char),
         _ => quote!(#ty),
     }
+}
+
+#[proc_macro_derive(Data)]
+pub fn derive_data(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+
+    let existing_has_repr = input.attrs.iter().any(|attr| attr.path().is_ident("repr"));
+
+    if existing_has_repr {
+        return TokenStream::new();
+    }
+
+    match &input.data {
+        syn::Data::Struct(_) => {
+            let expanded = quote! {
+                const _: () = {
+                    #[allow(dead_code)]
+                    const fn _assert_repr_c_for_data() {
+                        struct _AssertReprC where #name: Copy {}
+                    }
+                };
+            };
+            TokenStream::from(expanded)
+        }
+        syn::Data::Enum(data_enum) => {
+            let has_data = data_enum.variants.iter().any(|v| !v.fields.is_empty());
+            let repr_msg = if has_data {
+                "Data enums with variants need #[repr(C, i32)]"
+            } else {
+                "Data enums need #[repr(i32)]"
+            };
+            syn::Error::new_spanned(&input, repr_msg)
+                .to_compile_error()
+                .into()
+        }
+        syn::Data::Union(_) => {
+            syn::Error::new_spanned(&input, "Data cannot be derived for unions")
+                .to_compile_error()
+                .into()
+        }
+    }
+}
+
+#[proc_macro_attribute]
+pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_clone = item.clone();
+
+    if let Ok(item_fn) = syn::parse::<ItemFn>(item_clone.clone()) {
+        return ffi_export(attr, TokenStream::from(quote!(#item_fn)));
+    }
+
+    if let Ok(item_impl) = syn::parse::<syn::ItemImpl>(item_clone.clone()) {
+        return ffi_class(attr, TokenStream::from(quote!(#item_impl)));
+    }
+
+    if let Ok(item_trait) = syn::parse::<syn::ItemTrait>(item_clone) {
+        return ffi_trait(attr, TokenStream::from(quote!(#item_trait)));
+    }
+
+    syn::Error::new_spanned(
+        proc_macro2::TokenStream::from(item),
+        "export can only be applied to fn, impl, or trait",
+    )
+    .to_compile_error()
+    .into()
+}
+
+#[proc_macro_attribute]
+pub fn skip(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
+pub fn name(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
 }

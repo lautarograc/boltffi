@@ -10,7 +10,7 @@ pub mod subscription;
 pub mod types;
 
 pub use handle::HandleBox;
-pub use mobiFFI_macros::{FfiType, ffi_class, ffi_export, ffi_stream, ffi_trait};
+pub use mobiFFI_macros::{Data, FfiType, export, ffi_class, ffi_export, ffi_stream, ffi_trait, name, skip};
 pub use pending::{CancellationToken, PendingHandle};
 pub use ringbuffer::SpscRingBuffer;
 pub use rustfuture::{
@@ -145,7 +145,7 @@ impl Counter {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Data)]
 pub struct DataPoint {
     pub x: f64,
     pub y: f64,
@@ -168,6 +168,11 @@ impl DataStore {
 
     pub fn len(&self) -> usize {
         self.items.len()
+    }
+
+    #[skip]
+    pub fn internal_debug(&self) -> String {
+        format!("DataStore with {} items", self.items.len())
     }
 
     pub fn copy_into(&self, dst: &mut [DataPoint]) -> usize {
