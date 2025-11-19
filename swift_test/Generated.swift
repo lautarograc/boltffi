@@ -74,7 +74,7 @@ final class FfiFutureState<T>: @unchecked Sendable {
 
     @inline(__always)
     func canPoll() -> Bool {
-        !withUnsafeMutablePointer(to: &continuationSlot) { mffi_atomic_u64_cas($0, 1, 1) }
+        withUnsafeMutablePointer(to: &continuationSlot) { mffi_atomic_u64_load($0) } != 1
     }
 
     func decideFinish() -> FinishDecision {

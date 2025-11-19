@@ -153,6 +153,10 @@ static inline bool mffi_atomic_u64_cas(uint64_t* slot, uint64_t expected, uint64
   return atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)slot, &expected, desired, memory_order_acq_rel, memory_order_acquire);
 }
 
+static inline uint64_t mffi_atomic_u64_load(uint64_t* slot) {
+  return atomic_load_explicit((_Atomic uint64_t*)slot, memory_order_acquire);
+}
+
 typedef void (*StreamContinuationCallback)(uint64_t callback_data, int8_t poll_result);
 
 typedef struct DataPoint {

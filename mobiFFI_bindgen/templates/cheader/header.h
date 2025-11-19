@@ -16,6 +16,9 @@ static inline uint64_t {{ prefix }}_atomic_u64_exchange(uint64_t* slot, uint64_t
 static inline bool {{ prefix }}_atomic_u64_cas(uint64_t* slot, uint64_t expected, uint64_t desired) {
     return atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)slot, &expected, desired, memory_order_acq_rel, memory_order_acquire);
 }
+static inline uint64_t {{ prefix }}_atomic_u64_load(uint64_t* slot) {
+    return atomic_load_explicit((_Atomic uint64_t*)slot, memory_order_acquire);
+}
 FfiStatus {{ prefix }}_last_error_message(FfiString* out);
 void {{ prefix }}_clear_last_error(void);
 {%- for record in records %}
