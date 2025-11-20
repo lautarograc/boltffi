@@ -52,10 +52,12 @@ public enum {{ bridge_name }} {
         isRegistered = true
     }
     
-    public static func create(_ impl: {{ protocol_name }}) -> OpaquePointer {
+    /// Creates a foreign handle for the given implementation.
+    /// Ownership: Rust takes ownership and will call vtable.free exactly once.
+    public static func create(_ impl: {{ protocol_name }}) -> UnsafeMutablePointer<{{ foreign_type }}> {
         register()
         let wrapper = {{ wrapper_class }}(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
-        return OpaquePointer({{ create_fn }}(handle)!)
+        return UnsafeMutablePointer({{ create_fn }}(handle)!)
     }
 }

@@ -1002,7 +1002,7 @@ public final class DataConsumer {
 
     public func setProvider(provider: DataProviderProtocol) {
         
-let status = mffi_dataconsumer_set_provider(handle, UnsafeMutablePointer<ForeignDataProvider>(DataProviderBridge.create(provider)))
+let status = mffi_dataconsumer_set_provider(handle, DataProviderBridge.create(provider))
 ensureOk(status)
     }
 
@@ -1060,11 +1060,13 @@ public enum DataProviderBridge {
         isRegistered = true
     }
     
-    public static func create(_ impl: DataProviderProtocol) -> OpaquePointer {
+    /// Creates a foreign handle for the given implementation.
+    /// Ownership: Rust takes ownership and will call vtable.free exactly once.
+    public static func create(_ impl: DataProviderProtocol) -> UnsafeMutablePointer<ForeignDataProvider> {
         register()
         let wrapper = DataProviderWrapper(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
-        return OpaquePointer(mffi_create_data_provider(handle)!)
+        return UnsafeMutablePointer(mffi_create_data_provider(handle)!)
     }
 }
 
@@ -1110,11 +1112,13 @@ public enum AsyncDataFetcherBridge {
         isRegistered = true
     }
     
-    public static func create(_ impl: AsyncDataFetcherProtocol) -> OpaquePointer {
+    /// Creates a foreign handle for the given implementation.
+    /// Ownership: Rust takes ownership and will call vtable.free exactly once.
+    public static func create(_ impl: AsyncDataFetcherProtocol) -> UnsafeMutablePointer<ForeignAsyncDataFetcher> {
         register()
         let wrapper = AsyncDataFetcherWrapper(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
-        return OpaquePointer(mffi_create_async_data_fetcher(handle)!)
+        return UnsafeMutablePointer(mffi_create_async_data_fetcher(handle)!)
     }
 }
 

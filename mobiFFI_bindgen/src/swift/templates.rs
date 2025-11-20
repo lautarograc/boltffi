@@ -699,10 +699,7 @@ fn param_to_ffi_arg(param: &crate::model::Parameter) -> String {
     match &param.param_type {
         crate::model::Type::BoxedTrait(trait_name) => {
             let class_name = NamingConvention::class_name(trait_name);
-            format!(
-                "UnsafeMutablePointer<Foreign{}>({}Bridge.create({}))",
-                class_name, class_name, name
-            )
+            format!("{}Bridge.create({})", class_name, name)
         }
         _ => name,
     }
@@ -980,6 +977,7 @@ pub struct CallbackTraitTemplate {
     pub vtable_var: String,
     pub vtable_type: String,
     pub bridge_name: String,
+    pub foreign_type: String,
     pub register_fn: String,
     pub create_fn: String,
     pub methods: Vec<TraitMethodView>,
@@ -1015,6 +1013,7 @@ impl CallbackTraitTemplate {
             vtable_var: format!("{}VTableInstance", to_camel_case(trait_name)),
             vtable_type: callback_trait.ffi_vtable_name(),
             bridge_name: format!("{}Bridge", trait_name),
+            foreign_type: callback_trait.ffi_foreign_name(),
             register_fn: callback_trait.ffi_register_fn(&prefix),
             create_fn: callback_trait.ffi_create_fn(&prefix),
             methods: callback_trait
