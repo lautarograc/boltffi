@@ -75,7 +75,7 @@ pub mod c_types {
     }
 
     pub fn size_c_type() -> &'static str {
-        "size_t"
+        "uintptr_t"
     }
 }
 

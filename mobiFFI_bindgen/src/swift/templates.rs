@@ -1,4 +1,5 @@
 use askama::Template;
+use mobiFFI_ffi_rules::naming::snake_to_camel;
 
 use crate::model::{
     CallbackTrait, Class, Enumeration, Function, Method, Module, Record, StreamMethod, StreamMode,
@@ -60,7 +61,7 @@ impl RecordTemplate {
             .iter()
             .map(|field| {
                 let swift_name = NamingConvention::property_name(&field.name);
-                let c_name = field.name.clone();
+                let c_name = snake_to_camel(&field.name);
                 let needs_alias = swift_name != c_name;
                 FieldView {
                     needs_alias,
@@ -420,7 +421,7 @@ impl DataEnumTemplate {
                         .iter()
                         .map(|field| {
                             let swift_name = NamingConvention::param_name(&field.name);
-                            let c_name = field.name.clone();
+                            let c_name = snake_to_camel(&field.name);
                             FieldView {
                                 needs_alias: swift_name != c_name,
                                 swift_name,
