@@ -40,7 +40,7 @@ unsafe fn read_input_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
     if ptr.is_null() {
         return None;
     }
-    let bytes = core::slice::from_raw_parts(ptr, len);
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
     core::str::from_utf8(bytes).ok()
 }
 
@@ -123,6 +123,7 @@ pub fn copy_bytes(src: &[u8], dst: &mut [u8]) -> usize {
     len
 }
 
+#[derive(Default)]
 pub struct Counter {
     value: u64,
 }
@@ -154,6 +155,7 @@ pub struct DataPoint {
     pub timestamp: i64,
 }
 
+#[derive(Default)]
 pub struct DataStore {
     items: Vec<DataPoint>,
 }
@@ -170,6 +172,10 @@ impl DataStore {
 
     pub fn len(&self) -> usize {
         self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
     }
 
     #[skip]
@@ -223,9 +229,10 @@ pub fn generate_sequence(count: i32) -> Vec<i32> {
 
 #[ffi_export]
 pub fn foreach_range(start: i32, end: i32, mut callback: impl FnMut(i32)) {
-    (start..end).for_each(|i| callback(i));
+    (start..end).for_each(&mut callback);
 }
 
+#[derive(Default)]
 pub struct Accumulator {
     value: i64,
 }
@@ -431,6 +438,12 @@ pub struct SensorMonitor {
     readings_producer: StreamProducer<SensorReading>,
 }
 
+impl Default for SensorMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[ffi_class]
 impl SensorMonitor {
     pub fn new() -> Self {
@@ -464,10 +477,12 @@ pub trait DataProvider {
 }
 
 #[ffi_trait]
+#[allow(async_fn_in_trait)]
 pub trait AsyncDataFetcher {
     async fn fetch_value(&self, key: u32) -> u64;
 }
 
+#[derive(Default)]
 pub struct DataConsumer {
     provider: Option<Box<dyn DataProvider>>,
 }

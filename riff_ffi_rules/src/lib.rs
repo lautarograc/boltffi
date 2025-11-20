@@ -102,7 +102,7 @@ pub mod transforms {
 
     pub fn classify_param(type_str: &str) -> ParamTransform {
         let type_str = type_str.trim();
-        
+
         if type_str == "&str" || type_str == "& str" {
             return ParamTransform::StringToPtr;
         }
@@ -118,13 +118,13 @@ pub mod transforms {
         if type_str.starts_with("Vec<") && type_str.ends_with(">") {
             return ParamTransform::VecToPtr;
         }
-        
+
         ParamTransform::Direct
     }
 
     pub fn classify_return(type_str: &str) -> ReturnTransform {
         let type_str = type_str.trim();
-        
+
         if type_str.is_empty() || type_str == "()" {
             return ReturnTransform::Status;
         }
@@ -140,7 +140,7 @@ pub mod transforms {
         if type_str.starts_with("Result<") {
             return ReturnTransform::ResultOut;
         }
-        
+
         ReturnTransform::Direct
     }
 }
@@ -197,7 +197,11 @@ pub mod signatures {
         slice_param(param_name, inner_c_type, false)
     }
 
-    pub fn vec_return_signatures(base_name: &str, inner_c_type: &str, input_params: &[FfiParam]) -> Vec<FfiSignature> {
+    pub fn vec_return_signatures(
+        base_name: &str,
+        inner_c_type: &str,
+        input_params: &[FfiParam],
+    ) -> Vec<FfiSignature> {
         let len_name = format!("{}{}", base_name, naming::vec_len_suffix());
         let copy_name = format!("{}{}", base_name, naming::vec_copy_into_suffix());
 

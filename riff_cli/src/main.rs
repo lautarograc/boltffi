@@ -126,8 +126,8 @@ fn execute_command(command: Commands) -> Result<()> {
         Commands::Check { fix, ios, android } => {
             let options = CheckOptions {
                 fix,
-                ios: ios || (!ios && !android),
-                android: android || (!ios && !android),
+                ios: ios || !android,
+                android: android || !ios,
             };
             run_check(options).map(|_| ())
         }

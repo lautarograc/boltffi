@@ -76,7 +76,7 @@ impl SourceScanner {
         for entry in WalkDir::new(dir)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
         {
             self.scan_file(entry.path())?;
         }
@@ -207,11 +207,10 @@ impl SourceScanner {
         let mut methods = Vec::new();
 
         for item in &item_trait.items {
-            if let syn::TraitItem::Fn(method) = item {
-                if let Some(scanned_method) = self.process_trait_method(method) {
+            if let syn::TraitItem::Fn(method) = item
+                && let Some(scanned_method) = self.process_trait_method(method) {
                     methods.push(scanned_method);
                 }
-            }
         }
 
         self.callback_traits
@@ -286,10 +285,8 @@ impl SourceScanner {
                     if let Some(stream) = self.process_stream_method(method) {
                         class.streams.push(stream);
                     }
-                } else {
-                    if let Some(m) = self.process_method(method) {
-                        class.methods.push(m);
-                    }
+                } else if let Some(m) = self.process_method(method) {
+                    class.methods.push(m);
                 }
             }
         }
@@ -530,39 +527,31 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
             let last_segment = type_path.path.segments.last()?;
             let ident = last_segment.ident.to_string();
 
-            if ident == "Box" {
-                if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                    if let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) =
+            if ident == "Box"
+                && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
+                    && let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) =
                         args.args.first()
-                    {
-                        if let Some(syn::TypeParamBound::Trait(trait_bound)) =
+                        && let Some(syn::TypeParamBound::Trait(trait_bound)) =
                             trait_obj.bounds.first()
-                        {
-                            if let Some(seg) = trait_bound.path.segments.last() {
+                            && let Some(seg) = trait_bound.path.segments.last() {
                                 return Some(MType::BoxedTrait(seg.ident.to_string()));
                             }
-                        }
-                    }
-                }
-            }
 
             if ident == "Vec" {
-                if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         let inner = rust_type_to_ffi_type(inner_ty)?;
                         return Some(MType::Vec(Box::new(inner)));
                     }
-                }
                 return None;
             }
 
             if ident == "Option" {
-                if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         let inner = rust_type_to_ffi_type(inner_ty)?;
                         return Some(MType::Option(Box::new(inner)));
                     }
-                }
                 return None;
             }
 
@@ -630,8 +619,8 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
                         .last()
                         .map(|s| s.ident.to_string())?;
 
-                    if trait_name == "FnMut" || trait_name == "Fn" || trait_name == "FnOnce" {
-                        if let syn::PathArguments::Parenthesized(args) =
+                    if (trait_name == "FnMut" || trait_name == "Fn" || trait_name == "FnOnce")
+                        && let syn::PathArguments::Parenthesized(args) =
                             &trait_bound.path.segments.last()?.arguments
                         {
                             let param_type = args.inputs.first().and_then(rust_type_to_ffi_type);
@@ -639,17 +628,15 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
                                 param_type.unwrap_or(MType::Void),
                             )));
                         }
-                    }
                 }
             }
             None
         }
         Type::TraitObject(trait_obj) => {
-            if let Some(syn::TypeParamBound::Trait(trait_bound)) = trait_obj.bounds.first() {
-                if let Some(seg) = trait_bound.path.segments.last() {
+            if let Some(syn::TypeParamBound::Trait(trait_bound)) = trait_obj.bounds.first()
+                && let Some(seg) = trait_bound.path.segments.last() {
                     return Some(MType::BoxedTrait(seg.ident.to_string()));
                 }
-            }
             None
         }
         _ => None,

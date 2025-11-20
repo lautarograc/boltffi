@@ -65,23 +65,20 @@ struct FfiExport {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Default)]
 enum StreamMode {
+    #[default]
     Async,
     Batch,
     Callback,
 }
 
-impl Default for StreamMode {
-    fn default() -> Self {
-        StreamMode::Async
-    }
-}
 
 struct FfiStreamExport {
     class_name: String,
     method_name: String,
     item_type: String,
-    mode: StreamMode,
+    _mode: StreamMode,
 }
 
 struct FfiStruct {
@@ -146,7 +143,7 @@ fn collect_repr_c_structs(src_dir: &PathBuf) -> Vec<FfiStruct> {
     for entry in WalkDir::new(src_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
         let content = match fs::read_to_string(entry.path()) {
             Ok(c) => c,
@@ -161,17 +158,16 @@ fn collect_repr_c_structs(src_dir: &PathBuf) -> Vec<FfiStruct> {
         for item in &syntax.items {
             if let syn::Item::Struct(s) = item {
                 let has_repr_c = s.attrs.iter().any(|attr| {
-                    if attr.path().is_ident("repr") {
-                        if let Ok(arg) = attr.parse_args::<syn::Ident>() {
+                    if attr.path().is_ident("repr")
+                        && let Ok(arg) = attr.parse_args::<syn::Ident>() {
                             return arg == "C";
                         }
-                    }
                     false
                 });
 
                 let has_generics = !s.generics.params.is_empty();
-                if has_repr_c && !has_generics {
-                    if let syn::Fields::Named(fields) = &s.fields {
+                if has_repr_c && !has_generics
+                    && let syn::Fields::Named(fields) = &s.fields {
                         let field_list: Vec<(String, String)> = fields
                             .named
                             .iter()
@@ -189,7 +185,6 @@ fn collect_repr_c_structs(src_dir: &PathBuf) -> Vec<FfiStruct> {
                             });
                         }
                     }
-                }
             }
         }
     }
@@ -234,7 +229,7 @@ fn collect_ffi_enums(src_dir: &PathBuf) -> Vec<FfiEnum> {
     for entry in WalkDir::new(src_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
         let content = match fs::read_to_string(entry.path()) {
             Ok(c) => c,
@@ -318,7 +313,7 @@ fn collect_ffi_traits(src_dir: &PathBuf) -> Vec<FfiTrait> {
     for entry in WalkDir::new(src_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
         let content = match fs::read_to_string(entry.path()) {
             Ok(c) => c,
@@ -345,14 +340,13 @@ fn collect_ffi_traits(src_dir: &PathBuf) -> Vec<FfiTrait> {
 
                         let mut params = Vec::new();
                         for input in &method.sig.inputs {
-                            if let FnArg::Typed(pat_type) = input {
-                                if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                            if let FnArg::Typed(pat_type) = input
+                                && let Pat::Ident(pat_ident) = &*pat_type.pat {
                                     let param_name = pat_ident.ident.to_string();
                                     let param_type = rust_type_to_c(&pat_type.ty)
                                         .unwrap_or_else(|| "void*".to_string());
                                     params.push((param_name, param_type));
                                 }
-                            }
                         }
 
                         let return_type = match &method.sig.output {
@@ -387,7 +381,7 @@ fn collect_ffi_exports(src_dir: &PathBuf) -> (Vec<FfiExport>, Vec<FfiStreamExpor
     for entry in WalkDir::new(src_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
     {
         let content = match fs::read_to_string(entry.path()) {
             Ok(c) => c,
@@ -400,20 +394,17 @@ fn collect_ffi_exports(src_dir: &PathBuf) -> (Vec<FfiExport>, Vec<FfiStreamExpor
         };
 
         for item in &syntax.items {
-            if let syn::Item::Fn(func) = item {
-                if has_ffi_export_attr(func) {
-                    if let Some(export) = parse_ffi_function(func) {
+            if let syn::Item::Fn(func) = item
+                && has_ffi_export_attr(func)
+                    && let Some(export) = parse_ffi_function(func) {
                         exports.push(export);
                     }
-                }
-            }
-            if let syn::Item::Impl(impl_block) = item {
-                if has_ffi_class_attr(impl_block) {
+            if let syn::Item::Impl(impl_block) = item
+                && has_ffi_class_attr(impl_block) {
                     let (class_exports, class_streams) = parse_ffi_class(impl_block);
                     exports.extend(class_exports);
                     stream_exports.extend(class_streams);
                 }
-            }
         }
     }
 
@@ -514,7 +505,7 @@ fn parse_ffi_class(impl_block: &syn::ItemImpl) -> (Vec<FfiExport>, Vec<FfiStream
                     class_name: snake_name.clone(),
                     method_name: method_name.clone(),
                     item_type,
-                    mode,
+                    _mode: mode,
                 });
                 continue;
             }
@@ -582,20 +573,17 @@ fn classify_return_type(ty: &Type) -> FfiReturnKind {
         return FfiReturnKind::Unit;
     }
 
-    if let Type::Path(path) = ty {
-        if let Some(segment) = path.path.segments.last() {
-            if segment.ident == "Vec" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        if let Some(c_type) = rust_type_to_c(inner_ty) {
+    if let Type::Path(path) = ty
+        && let Some(segment) = path.path.segments.last() {
+            if segment.ident == "Vec"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+                        && let Some(c_type) = rust_type_to_c(inner_ty) {
                             return FfiReturnKind::Vec(c_type);
                         }
-                    }
-                }
-            }
-            if segment.ident == "Result" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+            if segment.ident == "Result"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
                         if inner_str == "String" || inner_str == "std::string::String" {
                             return FfiReturnKind::ResultString;
@@ -605,19 +593,13 @@ fn classify_return_type(ty: &Type) -> FfiReturnKind {
                             return FfiReturnKind::ResultPrimitive(c_type);
                         }
                     }
-                }
-            }
-            if segment.ident == "Option" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        if let Some(c_type) = rust_type_to_c(inner_ty) {
+            if segment.ident == "Option"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+                        && let Some(c_type) = rust_type_to_c(inner_ty) {
                             return FfiReturnKind::OptionPrimitive(c_type);
                         }
-                    }
-                }
-            }
         }
-    }
 
     rust_type_to_c(ty)
         .map(FfiReturnKind::Primitive)
@@ -639,16 +621,15 @@ fn extract_callback_arg_types(ty: &Type) -> Option<Vec<String>> {
                 let path = &trait_bound.path;
                 if let Some(segment) = path.segments.last() {
                     let ident = segment.ident.to_string();
-                    if ident == "Fn" || ident == "FnMut" || ident == "FnOnce" {
-                        if let syn::PathArguments::Parenthesized(args) = &segment.arguments {
+                    if (ident == "Fn" || ident == "FnMut" || ident == "FnOnce")
+                        && let syn::PathArguments::Parenthesized(args) = &segment.arguments {
                             let arg_types: Vec<String> = args
                                 .inputs
                                 .iter()
-                                .filter_map(|t| rust_type_to_c(t))
+                                .filter_map(rust_type_to_c)
                                 .collect();
                             return Some(arg_types);
                         }
-                    }
                 }
             }
         }
@@ -657,29 +638,24 @@ fn extract_callback_arg_types(ty: &Type) -> Option<Vec<String>> {
 }
 
 fn extract_slice_type(ty: &Type) -> Option<(String, bool)> {
-    if let Type::Reference(ref_ty) = ty {
-        if let Type::Slice(slice_ty) = ref_ty.elem.as_ref() {
+    if let Type::Reference(ref_ty) = ty
+        && let Type::Slice(slice_ty) = ref_ty.elem.as_ref() {
             let is_mut = ref_ty.mutability.is_some();
             if let Some(c_type) = rust_type_to_c(&slice_ty.elem) {
                 return Some((c_type, is_mut));
             }
         }
-    }
     None
 }
 
 fn extract_generic_inner_type(ty: &Type, wrapper: &str) -> Option<Type> {
-    if let Type::Path(path) = ty {
-        if let Some(segment) = path.path.segments.last() {
-            if segment.ident == wrapper {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+    if let Type::Path(path) = ty
+        && let Some(segment) = path.path.segments.last()
+            && segment.ident == wrapper
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         return Some(inner_ty.clone());
                     }
-                }
-            }
-        }
-    }
     None
 }
 
@@ -720,11 +696,11 @@ fn classify_async_callback_type(ty: &Type) -> String {
         return format!("struct FfiOption_{}", cbindgen_name);
     }
 
-    if let Type::Path(path) = ty {
-        if let Some(segment) = path.path.segments.last() {
-            if segment.ident == "Result" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+    if let Type::Path(path) = ty
+        && let Some(segment) = path.path.segments.last()
+            && segment.ident == "Result"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
 
                         if inner_str == "String" || inner_str == "std::string::String" {
@@ -744,10 +720,6 @@ fn classify_async_callback_type(ty: &Type) -> String {
 
                         return rust_type_to_c(inner_ty).unwrap_or_else(|| "void".to_string());
                     }
-                }
-            }
-        }
-    }
 
     rust_type_to_c(ty).unwrap_or_else(|| "void".to_string())
 }
@@ -1048,7 +1020,7 @@ fn generate_enum_typedef(e: &FfiEnum) -> String {
                 if types.len() == 1 {
                     out.push_str(&format!("    {} {};\n", types[0], variant.name));
                 } else {
-                    out.push_str(&format!("    struct {{ "));
+                    out.push_str("    struct { ");
                     for (i, ty) in types.iter().enumerate() {
                         out.push_str(&format!("{} _{}; ", ty, i));
                     }
@@ -1056,7 +1028,7 @@ fn generate_enum_typedef(e: &FfiEnum) -> String {
                 }
             }
             EnumVariantData::Struct(fields) => {
-                out.push_str(&format!("    struct {{ "));
+                out.push_str("    struct { ");
                 for (name, ty) in fields {
                     out.push_str(&format!("{} {}; ", ty, name));
                 }
@@ -1233,12 +1205,12 @@ fn append_macro_exports(
             ""
         };
         let has_streams = !stream_exports.is_empty();
-        let atomic_cas_defs = if (has_async || has_streams) && !header.contains("riff_atomic_u8_cas")
-        {
-            include_str!("templates/atomics.h")
-        } else {
-            ""
-        };
+        let atomic_cas_defs =
+            if (has_async || has_streams) && !header.contains("riff_atomic_u8_cas") {
+                include_str!("templates/atomics.h")
+            } else {
+                ""
+            };
 
         let stream_continuation_defs = if has_streams
             && !header.contains("StreamContinuationCallback")
@@ -1292,7 +1264,7 @@ fn generate_trait_typedef(t: &FfiTrait) -> String {
     let trait_name = &t.name;
     let vtable_name = format!("{}VTable", trait_name);
     let foreign_name = format!("Foreign{}", trait_name);
-    let snake_name = trait_name_to_snake(&trait_name);
+    let snake_name = trait_name_to_snake(trait_name);
 
     let mut vtable_fields = vec![
         "  void (*free)(uint64_t handle);".to_string(),

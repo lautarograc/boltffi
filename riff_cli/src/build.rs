@@ -1,22 +1,14 @@
 use std::process::Command;
 
 use crate::config::Config;
-use crate::error::{CliError, Result};
 use crate::target::RustTarget;
 
+#[derive(Default)]
 pub struct BuildOptions {
     pub release: bool,
     pub package: Option<String>,
 }
 
-impl Default for BuildOptions {
-    fn default() -> Self {
-        Self {
-            release: false,
-            package: None,
-        }
-    }
-}
 
 pub struct Builder<'a> {
     config: &'a Config,
@@ -76,33 +68,6 @@ impl<'a> Builder<'a> {
         }
     }
 }
-
-pub fn build_single(target: &RustTarget, package: &str, release: bool) -> Result<()> {
-    let mut cmd = Command::new("cargo");
-    cmd.arg("build");
-
-    if release {
-        cmd.arg("--release");
-    }
-
-    cmd.arg("--target").arg(target.triple());
-    cmd.arg("-p").arg(package);
-
-    let status = cmd.status().map_err(|_| CliError::CommandFailed {
-        command: format!("cargo build --target {}", target.triple()),
-        status: None,
-    })?;
-
-    if !status.success() {
-        return Err(CliError::CommandFailed {
-            command: format!("cargo build --target {}", target.triple()),
-            status: status.code(),
-        });
-    }
-
-    Ok(())
-}
-
 pub fn count_successful(results: &[BuildResult]) -> usize {
     results.iter().filter(|r| r.success).count()
 }

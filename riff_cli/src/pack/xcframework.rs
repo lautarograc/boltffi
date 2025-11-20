@@ -301,13 +301,13 @@ fn create_zip(source_dir: &Path, zip_path: &Path) -> Result<()> {
                 zip_writer
                     .add_directory(path_string, options)
                     .map_err(|_| CliError::ZipFailed {
-                        source: std::io::Error::new(std::io::ErrorKind::Other, "zip dir failed"),
+                        source: std::io::Error::other("zip dir failed"),
                     })?;
             } else {
                 zip_writer
                     .start_file(path_string, options)
                     .map_err(|_| CliError::ZipFailed {
-                        source: std::io::Error::new(std::io::ErrorKind::Other, "zip start failed"),
+                        source: std::io::Error::other("zip start failed"),
                     })?;
 
                 let content =
@@ -324,7 +324,7 @@ fn create_zip(source_dir: &Path, zip_path: &Path) -> Result<()> {
         })?;
 
     zip_writer.finish().map_err(|_| CliError::ZipFailed {
-        source: std::io::Error::new(std::io::ErrorKind::Other, "zip finish failed"),
+        source: std::io::Error::other("zip finish failed"),
     })?;
 
     Ok(())

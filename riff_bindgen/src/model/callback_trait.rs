@@ -102,7 +102,7 @@ impl TraitMethod {
     }
 
     pub fn has_return(&self) -> bool {
-        self.output.as_ref().map_or(false, |t| !t.is_void())
+        self.output.as_ref().is_some_and(|t| !t.is_void())
     }
 }
 

@@ -213,6 +213,7 @@ struct DataStore * riff_datastore_new(void);
 struct FfiStatus riff_datastore_free(struct DataStore * handle);
 struct FfiStatus riff_datastore_add(struct DataStore * handle, DataPoint point);
 uintptr_t riff_datastore_len(struct DataStore * handle);
+bool riff_datastore_is_empty(struct DataStore * handle);
 uintptr_t riff_datastore_copy_into(struct DataStore * handle, DataPoint* dst_ptr, uintptr_t dst_len);
 struct FfiStatus riff_datastore_foreach(struct DataStore * handle, void (*callback_cb)(void*, DataPoint), void* callback_ud);
 double riff_datastore_sum(struct DataStore * handle);

@@ -21,12 +21,16 @@ impl<T> HandleBox<T> {
     pub unsafe fn from_raw(ptr: *mut T) -> Option<Self> {
         NonNull::new(ptr).map(|ptr| Self { ptr })
     }
+}
 
-    pub fn as_ref(&self) -> &T {
+impl<T> AsRef<T> for HandleBox<T> {
+    fn as_ref(&self) -> &T {
         unsafe { self.ptr.as_ref() }
     }
+}
 
-    pub fn as_mut(&mut self) -> &mut T {
+impl<T> AsMut<T> for HandleBox<T> {
+    fn as_mut(&mut self) -> &mut T {
         unsafe { self.ptr.as_mut() }
     }
 }

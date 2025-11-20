@@ -18,9 +18,6 @@ pub enum CliError {
         status: Option<i32>,
     },
 
-    #[error("tool not found: {tool}")]
-    ToolNotFound { tool: String },
-
     #[error("failed to create directory {path}")]
     CreateDirectoryFailed {
         path: PathBuf,
@@ -54,9 +51,6 @@ pub enum CliError {
 
     #[error("zip creation failed")]
     ZipFailed { source: std::io::Error },
-
-    #[error("missing rust target: {target}")]
-    MissingTarget { target: String },
 }
 
 pub type Result<T> = std::result::Result<T, CliError>;

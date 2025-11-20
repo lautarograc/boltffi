@@ -76,7 +76,3 @@ impl<'a> AndroidPackager<'a> {
         Ok(dest_path)
     }
 }
-
-pub fn generate_gradle_dependency(group: &str, artifact: &str, version: &str) -> String {
-    format!(r#"implementation("{}:{}:{}")"#, group, artifact, version)
-}

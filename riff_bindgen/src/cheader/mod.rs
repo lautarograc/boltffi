@@ -1,6 +1,10 @@
 use askama::Template;
 
-use riff_ffi_rules::{c_types, naming::{self, snake_to_camel}, signatures::FfiParam};
+use riff_ffi_rules::{
+    c_types,
+    naming::{self, snake_to_camel},
+    signatures::FfiParam,
+};
 
 use crate::model::{Function, Module, Parameter, Type};
 
@@ -98,10 +102,7 @@ impl CHeaderGenerator {
     }
 
     fn build_params(inputs: &[Parameter]) -> Vec<FfiParam> {
-        inputs
-            .iter()
-            .flat_map(|p| Self::param_to_ffi(p))
-            .collect()
+        inputs.iter().flat_map(Self::param_to_ffi).collect()
     }
 
     fn param_to_ffi(param: &Parameter) -> Vec<FfiParam> {

@@ -19,7 +19,9 @@ struct ContinuationCallback(RustFutureContinuationCallback);
 
 impl ContinuationCallback {
     fn from_raw_ptr(ptr: *mut ()) -> Option<Self> {
-        (!ptr.is_null()).then(|| Self(unsafe { std::mem::transmute(ptr) }))
+        (!ptr.is_null()).then(|| {
+            Self(unsafe { std::mem::transmute::<*mut (), RustFutureContinuationCallback>(ptr) })
+        })
     }
 
     fn into_raw_ptr(self) -> *mut () {

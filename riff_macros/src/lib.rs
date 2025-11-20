@@ -23,25 +23,6 @@ pub fn derive_ffi_type(input: TokenStream) -> TokenStream {
     TokenStream::from(quote! {})
 }
 
-enum ParamKind {
-    StrRef(syn::Ident),
-    Primitive(syn::PatType),
-}
-
-fn classify_param(pat_type: &syn::PatType) -> ParamKind {
-    let type_str = quote::quote!(#pat_type.ty).to_string().replace(" ", "");
-    let name = match pat_type.pat.as_ref() {
-        Pat::Ident(ident) => ident.ident.clone(),
-        _ => syn::Ident::new("arg", proc_macro2::Span::call_site()),
-    };
-
-    if type_str.contains("&str") || type_str.contains("&'") && type_str.contains("str") {
-        ParamKind::StrRef(name)
-    } else {
-        ParamKind::Primitive(pat_type.clone())
-    }
-}
-
 enum ParamTransform {
     PassThrough,
     StrRef,
@@ -65,12 +46,11 @@ fn extract_fn_arg_types(ty: &Type) -> Option<Vec<syn::Type>> {
                 let path = &trait_bound.path;
                 if let Some(segment) = path.segments.last() {
                     let ident = segment.ident.to_string();
-                    if ident == "Fn" || ident == "FnMut" || ident == "FnOnce" {
-                        if let syn::PathArguments::Parenthesized(args) = &segment.arguments {
+                    if (ident == "Fn" || ident == "FnMut" || ident == "FnOnce")
+                        && let syn::PathArguments::Parenthesized(args) = &segment.arguments {
                             let arg_types: Vec<syn::Type> = args.inputs.iter().cloned().collect();
                             return Some(arg_types);
                         }
-                    }
                 }
             }
         }
@@ -80,50 +60,37 @@ fn extract_fn_arg_types(ty: &Type) -> Option<Vec<syn::Type>> {
 }
 
 fn extract_slice_inner(ty: &Type) -> Option<(syn::Type, bool)> {
-    if let Type::Reference(ref_ty) = ty {
-        if let Type::Slice(slice_ty) = ref_ty.elem.as_ref() {
+    if let Type::Reference(ref_ty) = ty
+        && let Type::Slice(slice_ty) = ref_ty.elem.as_ref() {
             let is_mut = ref_ty.mutability.is_some();
             return Some((*slice_ty.elem.clone(), is_mut));
         }
-    }
     None
 }
 
 fn extract_boxed_dyn_trait(ty: &Type) -> Option<syn::Ident> {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Box" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) =
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+            && segment.ident == "Box"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) =
                         args.args.first()
-                    {
-                        if let Some(syn::TypeParamBound::Trait(trait_bound)) =
+                        && let Some(syn::TypeParamBound::Trait(trait_bound)) =
                             trait_obj.bounds.first()
-                        {
-                            if let Some(seg) = trait_bound.path.segments.last() {
+                            && let Some(seg) = trait_bound.path.segments.last() {
                                 return Some(seg.ident.clone());
                             }
-                        }
-                    }
-                }
-            }
-        }
-    }
     None
 }
 
 fn extract_vec_param_inner(ty: &Type) -> Option<syn::Type> {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if segment.ident == "Vec" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+            && segment.ident == "Vec"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         return Some(inner_ty.clone());
                     }
-                }
-            }
-        }
-    }
     None
 }
 
@@ -497,17 +464,13 @@ enum ReturnKind {
 }
 
 fn extract_vec_inner(ty: &Type) -> Option<syn::Type> {
-    if let Type::Path(path) = ty {
-        if let Some(segment) = path.path.segments.last() {
-            if segment.ident == "Vec" {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+    if let Type::Path(path) = ty
+        && let Some(segment) = path.path.segments.last()
+            && segment.ident == "Vec"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         return Some(inner_ty.clone());
                     }
-                }
-            }
-        }
-    }
     None
 }
 
@@ -525,11 +488,11 @@ fn classify_return(output: &ReturnType) -> ReturnKind {
                 return ReturnKind::Vec(inner);
             }
 
-            if let Type::Path(path) = ty.as_ref() {
-                if let Some(segment) = path.path.segments.last() {
-                    if segment.ident == "Result" {
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+            if let Type::Path(path) = ty.as_ref()
+                && let Some(segment) = path.path.segments.last() {
+                    if segment.ident == "Result"
+                        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                                 let inner_str =
                                     quote::quote!(#inner_ty).to_string().replace(" ", "");
                                 if inner_str == "String" || inner_str == "std::string::String" {
@@ -540,17 +503,12 @@ fn classify_return(output: &ReturnType) -> ReturnKind {
                                     return ReturnKind::ResultPrimitive(inner_ty.clone());
                                 }
                             }
-                        }
-                    }
-                    if segment.ident == "Option" {
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                    if segment.ident == "Option"
+                        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                                 return ReturnKind::OptionPrimitive(inner_ty.clone());
                             }
-                        }
-                    }
                 }
-            }
 
             ReturnKind::Primitive
         }
@@ -571,17 +529,13 @@ enum AsyncReturnKind {
 }
 
 fn extract_generic_inner(ty: &Type, wrapper: &str) -> Option<syn::Type> {
-    if let Type::Path(path) = ty {
-        if let Some(segment) = path.path.segments.last() {
-            if segment.ident == wrapper {
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+    if let Type::Path(path) = ty
+        && let Some(segment) = path.path.segments.last()
+            && segment.ident == wrapper
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         return Some(inner_ty.clone());
                     }
-                }
-            }
-        }
-    }
     None
 }
 
@@ -603,11 +557,11 @@ fn classify_async_return(output: &ReturnType) -> AsyncReturnKind {
                 return AsyncReturnKind::Option(quote! { #inner_ty });
             }
 
-            if let Type::Path(path) = ty.as_ref() {
-                if let Some(segment) = path.path.segments.last() {
-                    if segment.ident == "Result" {
-                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+            if let Type::Path(path) = ty.as_ref()
+                && let Some(segment) = path.path.segments.last()
+                    && segment.ident == "Result"
+                        && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                            && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                                 let inner_str =
                                     quote::quote!(#inner_ty).to_string().replace(" ", "");
 
@@ -625,10 +579,6 @@ fn classify_async_return(output: &ReturnType) -> AsyncReturnKind {
                                     return AsyncReturnKind::ResultStruct(quote! { #inner_ty });
                                 }
                             }
-                        }
-                    }
-                }
-            }
 
             if is_primitive_type(&type_str) {
                 AsyncReturnKind::Primitive(quote! { #ty })
@@ -887,18 +837,6 @@ fn generate_async_export(input: &ItemFn) -> TokenStream {
     };
 
     TokenStream::from(expanded)
-}
-
-fn to_pascal_case(s: &str) -> String {
-    s.split('_')
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-                None => String::new(),
-            }
-        })
-        .collect()
 }
 
 #[proc_macro_attribute]
@@ -1821,8 +1759,8 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
             let mut call_args = Vec::new();
 
             for input in &method.sig.inputs {
-                if let FnArg::Typed(pat_type) = input {
-                    if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                if let FnArg::Typed(pat_type) = input
+                    && let Pat::Ident(pat_ident) = &*pat_type.pat {
                         let param_name = &pat_ident.ident;
                         let param_type = &pat_type.ty;
 
@@ -1831,15 +1769,12 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                         param_names.push(quote! { #param_name: #param_type });
                         call_args.push(quote! { #param_name });
                     }
-                }
             }
 
             let return_type = match &method.sig.output {
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => Some(ty.clone()),
             };
-
-            let has_return = return_type.is_some();
 
             if is_async {
                 let callback_type = if let Some(ref ret_ty) = return_type {

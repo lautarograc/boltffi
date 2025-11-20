@@ -88,7 +88,7 @@ fn create_default_config(package_name: &str) -> Config {
 
 fn to_pascal_case(input: &str) -> String {
     input
-        .split(|c: char| c == '_' || c == '-')
+        .split(['_', '-'])
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {

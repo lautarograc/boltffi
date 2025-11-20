@@ -2,7 +2,7 @@
 name = "riff_macros"
 version = "0.1.0"
 edition = "2024"
-authors = ["Ali Hilal <alihilal@proton.me>"]
+authors = ["Ali A. Hilal <me@alihilal.com>"]
 
 [lib]
 proc-macro = true
@@ -11,3 +11,6 @@ proc-macro = true
 syn = { version = "2", features = ["full", "parsing", "printing"] }
 quote = "1"
 proc-macro2 = "1"
+
+[lints]
+workspace = true

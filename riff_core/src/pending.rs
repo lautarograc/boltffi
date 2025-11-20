@@ -47,14 +47,14 @@ impl CancellationToken {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riff_pending_cancel(handle: *mut PendingHandle) {
     if !handle.is_null() {
-        (*handle).cancel();
+        unsafe { (*handle).cancel() };
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riff_pending_free(handle: *mut PendingHandle) {
     if !handle.is_null() {
-        drop(Box::from_raw(handle));
+        drop(unsafe { Box::from_raw(handle) });
     }
 }
 

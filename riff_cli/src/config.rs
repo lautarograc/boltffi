@@ -49,6 +49,7 @@ pub struct AndroidConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[derive(Default)]
 pub struct PackConfig {
     #[serde(default)]
     pub xcframework: XcframeworkConfig,
@@ -122,15 +123,6 @@ impl Default for AndroidConfig {
     }
 }
 
-impl Default for PackConfig {
-    fn default() -> Self {
-        Self {
-            xcframework: XcframeworkConfig::default(),
-            spm: SpmConfig::default(),
-            android: AndroidPackConfig::default(),
-        }
-    }
-}
 
 impl Default for XcframeworkConfig {
     fn default() -> Self {
@@ -161,21 +153,21 @@ impl Default for AndroidPackConfig {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path).map_err(|err| ConfigError::ReadFailed {
+        let content = std::fs::read_to_string(path).map_err(|err| ConfigError::Read {
             path: path.to_path_buf(),
             source: err,
         })?;
 
-        toml::from_str(&content).map_err(|err| ConfigError::ParseFailed {
+        toml::from_str(&content).map_err(|err| ConfigError::Parse {
             path: path.to_path_buf(),
             source: err,
         })
     }
 
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
-        let content = toml::to_string_pretty(self).map_err(ConfigError::SerializeFailed)?;
+        let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
 
-        std::fs::write(path, content).map_err(|err| ConfigError::WriteFailed {
+        std::fs::write(path, content).map_err(|err| ConfigError::Write {
             path: path.to_path_buf(),
             source: err,
         })
@@ -206,7 +198,7 @@ impl Config {
 
 fn to_pascal_case(input: &str) -> String {
     input
-        .split(|c: char| c == '_' || c == '-')
+        .split(['_', '-'])
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {
@@ -220,22 +212,22 @@ fn to_pascal_case(input: &str) -> String {
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to read config from {path}")]
-    ReadFailed {
+    Read {
         path: PathBuf,
         source: std::io::Error,
     },
 
     #[error("failed to parse config from {path}")]
-    ParseFailed {
+    Parse {
         path: PathBuf,
         source: toml::de::Error,
     },
 
     #[error("failed to serialize config")]
-    SerializeFailed(#[source] toml::ser::Error),
+    Serialize(#[source] toml::ser::Error),
 
     #[error("failed to write config to {path}")]
-    WriteFailed {
+    Write {
         path: PathBuf,
         source: std::io::Error,
     },

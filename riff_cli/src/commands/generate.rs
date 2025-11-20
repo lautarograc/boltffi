@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use riff_bindgen::{scan_crate, Swift};
+use riff_bindgen::{Swift, scan_crate};
 
 use crate::config::Config;
 use crate::error::{CliError, Result};
@@ -43,7 +43,7 @@ fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
     let crate_dir = PathBuf::from(".");
     let crate_name = config.library_name();
 
-    let module = scan_crate(&crate_dir, &crate_name).map_err(|e| CliError::CommandFailed {
+    let module = scan_crate(&crate_dir, crate_name).map_err(|e| CliError::CommandFailed {
         command: format!("scan_crate: {}", e),
         status: None,
     })?;

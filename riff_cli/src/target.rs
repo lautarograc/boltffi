@@ -109,21 +109,6 @@ impl RustTarget {
             .join(profile)
             .join(format!("lib{}.a", lib_name))
     }
-
-    pub fn from_triple(triple: &str) -> Option<Self> {
-        match triple {
-            "aarch64-apple-ios" => Some(Self::IOS_ARM64),
-            "aarch64-apple-ios-sim" => Some(Self::IOS_SIM_ARM64),
-            "x86_64-apple-ios" => Some(Self::IOS_SIM_X86_64),
-            "aarch64-apple-darwin" => Some(Self::MACOS_ARM64),
-            "x86_64-apple-darwin" => Some(Self::MACOS_X86_64),
-            "aarch64-linux-android" => Some(Self::ANDROID_ARM64),
-            "armv7-linux-androideabi" => Some(Self::ANDROID_ARMV7),
-            "x86_64-linux-android" => Some(Self::ANDROID_X86_64),
-            "i686-linux-android" => Some(Self::ANDROID_X86),
-            _ => None,
-        }
-    }
 }
 
 impl Platform {
@@ -132,10 +117,6 @@ impl Platform {
             self,
             Platform::Ios | Platform::IosSimulator | Platform::MacOs
         )
-    }
-
-    pub fn is_simulator(&self) -> bool {
-        matches!(self, Platform::IosSimulator)
     }
 }
 
@@ -171,20 +152,6 @@ impl BuiltLibrary {
                     path,
                 })
             })
-            .collect()
-    }
-
-    pub fn filter_by_platform(libraries: &[Self], platform: Platform) -> Vec<&Self> {
-        libraries
-            .iter()
-            .filter(|lib| lib.target.platform() == platform)
-            .collect()
-    }
-
-    pub fn filter_simulators(libraries: &[Self]) -> Vec<&Self> {
-        libraries
-            .iter()
-            .filter(|lib| lib.target.platform().is_simulator())
             .collect()
     }
 }

@@ -1,7 +1,8 @@
 [package]
 name = "riff_bindgen"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+authors = ["Ali A. Hilal <me@alihilal.com>"]
 
 [dependencies]
 riff_ffi_rules = { path = "../riff_ffi_rules" }
@@ -14,3 +15,6 @@ syn = { version = "2.0", features = ["full", "parsing", "visit"] }
 quote = "1.0"
 proc-macro2 = "1.0"
 walkdir = "2.4"
+
+[lints]
+workspace = true

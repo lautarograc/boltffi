@@ -97,7 +97,7 @@ impl Method {
     pub fn has_return_value(&self) -> bool {
         self.output
             .as_ref()
-            .map_or(false, |output| !output.is_void())
+            .is_some_and(|output| !output.is_void())
     }
 
     pub fn has_callbacks(&self) -> bool {

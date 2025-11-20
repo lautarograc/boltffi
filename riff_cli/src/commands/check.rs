@@ -1,4 +1,4 @@
-use crate::check::{install_missing_targets, EnvironmentCheck};
+use crate::check::{EnvironmentCheck, install_missing_targets};
 use crate::error::Result;
 use crate::target::RustTarget;
 
@@ -99,9 +99,5 @@ fn print_environment_status(check: &EnvironmentCheck, options: &CheckOptions) {
 }
 
 fn status_icon(success: bool) -> &'static str {
-    if success {
-        "[ok]"
-    } else {
-        "[missing]"
-    }
+    if success { "[ok]" } else { "[missing]" }
 }

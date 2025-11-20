@@ -1,5 +1,5 @@
 use crate::build::{
-    all_successful, count_successful, failed_targets, BuildOptions, BuildResult, Builder,
+    BuildOptions, BuildResult, Builder, all_successful, count_successful, failed_targets,
 };
 use crate::config::Config;
 use crate::error::Result;

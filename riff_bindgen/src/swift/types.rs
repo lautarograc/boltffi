@@ -83,7 +83,7 @@ impl TypeMapper {
 
     pub fn to_ffi_conversion(param_name: &str, ty: &Type) -> String {
         match ty {
-            Type::String => format!("{}", param_name),
+            Type::String => param_name.to_string(),
             Type::Primitive(_) => param_name.to_string(),
             Type::Record(_) => param_name.to_string(),
             Type::Enum(_) => param_name.to_string(),

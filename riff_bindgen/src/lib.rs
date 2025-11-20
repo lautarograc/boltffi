@@ -11,7 +11,7 @@ pub use model::{
 };
 
 pub use kotlin::Kotlin;
-pub use scan::{scan_crate, SourceScanner};
+pub use scan::{SourceScanner, scan_crate};
 pub use swift::Swift;
 
 #[cfg(test)]

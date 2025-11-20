@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::config::{Config, SpmDistribution};
 use crate::error::{CliError, Result};
@@ -146,36 +146,4 @@ let package = Package(
             .map(|major| format!("v{}", major))
             .unwrap_or_else(|| "v16".to_string())
     }
-}
-
-pub fn update_existing_package_swift(
-    package_path: &Path,
-    version: &str,
-    checksum: &str,
-) -> Result<()> {
-    let content = std::fs::read_to_string(package_path).map_err(|source| CliError::ReadFailed {
-        path: package_path.to_path_buf(),
-        source,
-    })?;
-
-    let updated = content
-        .lines()
-        .map(|line| {
-            if line.starts_with("let releaseTag = ") {
-                format!(r#"let releaseTag = "{}""#, version)
-            } else if line.starts_with("let releaseChecksum = ") {
-                format!(r#"let releaseChecksum = "{}""#, checksum)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    std::fs::write(package_path, updated).map_err(|source| CliError::WriteFailed {
-        path: package_path.to_path_buf(),
-        source,
-    })?;
-
-    Ok(())
 }

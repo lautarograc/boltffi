@@ -1,7 +1,8 @@
 [package]
 name = "riff_cli"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+authors = ["Ali A. Hilal <me@alihilal.com>"]
 
 [[bin]]
 name = "riff"
@@ -18,3 +19,6 @@ sha2 = "0.10"
 hex = "0.4"
 zip = "2.2"
 walkdir = "2.4"
+
+[lints]
+workspace = true

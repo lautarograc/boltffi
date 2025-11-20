@@ -1,11 +1,11 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use riff_bindgen::model::Module;
-use riff_bindgen::{scan_crate, Swift};
+use riff_bindgen::{Swift, scan_crate};
 
-fn read_crate_name(crate_path: &PathBuf) -> String {
+fn read_crate_name(crate_path: &Path) -> String {
     let cargo_toml_path = crate_path.join("Cargo.toml");
     let content = fs::read_to_string(&cargo_toml_path).expect("Failed to read Cargo.toml");
 
@@ -104,7 +104,11 @@ fn main() {
 
     println!("\n--- Records ---");
     module.records.iter().for_each(|record_item| {
-        println!("  {} ({} fields)", record_item.name, record_item.fields.len());
+        println!(
+            "  {} ({} fields)",
+            record_item.name,
+            record_item.fields.len()
+        );
     });
 
     println!("\n--- Functions ---");

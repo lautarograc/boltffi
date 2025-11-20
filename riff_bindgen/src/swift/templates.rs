@@ -265,7 +265,9 @@ impl FunctionTemplate {
                 .filter(|param| !matches!(param.param_type, Type::Callback(_)))
                 .scan(false, |seen_pointer_param, param| {
                     let slice_inner_type = match &param.param_type {
-                        Type::Slice(inner) | Type::MutSlice(inner) => Some(TypeMapper::map_type(inner)),
+                        Type::Slice(inner) | Type::MutSlice(inner) => {
+                            Some(TypeMapper::map_type(inner))
+                        }
                         _ => None,
                     };
 
@@ -749,7 +751,7 @@ impl SyncMethodBodyTemplate {
         Self {
             ffi_name: method.ffi_name(&class_prefix),
             params,
-            has_return: method.output.as_ref().map_or(false, |t| !t.is_void()),
+            has_return: method.output.as_ref().is_some_and(|t| !t.is_void()),
             has_pointer_params,
         }
     }
@@ -761,7 +763,6 @@ pub struct CallbackMethodBodyTemplate {
     pub ffi_name: String,
     pub params: Vec<MethodParamView>,
     pub has_return: bool,
-    pub has_pointer_params: bool,
     pub callbacks: Vec<CallbackView>,
 }
 
@@ -783,15 +784,10 @@ impl CallbackMethodBodyTemplate {
 
         let params = method_param_views(method.non_callback_params());
 
-        let has_pointer_params = params
-            .iter()
-            .any(|param| param.is_string || param.is_slice || param.is_mut_slice || param.is_vec);
-
         Self {
             ffi_name: method.ffi_name(&class_prefix),
             params,
-            has_return: method.output.as_ref().map_or(false, |t| !t.is_void()),
-            has_pointer_params,
+            has_return: method.output.as_ref().is_some_and(|t| !t.is_void()),
             callbacks: method
                 .callback_params()
                 .enumerate()
@@ -832,7 +828,6 @@ impl CallbackMethodBodyTemplate {
 pub struct ThrowingMethodBodyTemplate {
     pub ffi_name: String,
     pub params: Vec<MethodParamView>,
-    pub has_pointer_params: bool,
     pub return_type: String,
 }
 
@@ -841,14 +836,9 @@ impl ThrowingMethodBodyTemplate {
         let class_prefix = class.ffi_prefix(&module.ffi_prefix());
         let params = method_param_views(method.inputs.iter());
 
-        let has_pointer_params = params
-            .iter()
-            .any(|param| param.is_string || param.is_slice || param.is_mut_slice || param.is_vec);
-
         Self {
             ffi_name: method.ffi_name(&class_prefix),
             params,
-            has_pointer_params,
             return_type: method
                 .output
                 .as_ref()
