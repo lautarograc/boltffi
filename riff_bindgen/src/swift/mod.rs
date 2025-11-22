@@ -1,5 +1,6 @@
 mod body;
 mod conversion;
+mod marshal;
 mod names;
 mod templates;
 mod types;
@@ -10,6 +11,7 @@ use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record, 
 
 pub use body::BodyRenderer;
 pub use conversion::{CallbackInfo, ParamInfo, ParamsInfo, ReturnInfo};
+pub use marshal::{ParamConversion, ReturnConversion, ReturnStrategy, SwiftType, SyncCallBuilder};
 pub use names::NamingConvention;
 pub use templates::{
     CStyleEnumTemplate, CallbackTraitTemplate, ClassTemplate, DataEnumTemplate, FunctionTemplate,
