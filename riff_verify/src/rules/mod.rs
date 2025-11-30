@@ -1,0 +1,56 @@
+mod memory;
+mod refcount;
+mod violation;
+
+pub use memory::{AllocFreeBalance, NoUseAfterFree, NoDoubleFree};
+pub use refcount::{RetainReleaseBalance, NoDoubleRelease};
+pub use violation::{Violation, ViolationKind, Severity};
+
+use crate::analysis::EffectTrace;
+
+pub trait Rule: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn description(&self) -> &'static str;
+    fn check(&self, trace: &EffectTrace) -> Vec<Violation>;
+}
+
+pub struct RuleRegistry {
+    rules: Vec<Box<dyn Rule>>,
+}
+
+impl RuleRegistry {
+    pub fn new() -> Self {
+        Self { rules: Vec::new() }
+    }
+
+    pub fn with_defaults() -> Self {
+        let mut registry = Self::new();
+        registry.register(Box::new(AllocFreeBalance));
+        registry.register(Box::new(NoUseAfterFree));
+        registry.register(Box::new(NoDoubleFree));
+        registry.register(Box::new(RetainReleaseBalance));
+        registry.register(Box::new(NoDoubleRelease));
+        registry
+    }
+
+    pub fn register(&mut self, rule: Box<dyn Rule>) {
+        self.rules.push(rule);
+    }
+
+    pub fn check_all(&self, trace: &EffectTrace) -> Vec<Violation> {
+        self.rules
+            .iter()
+            .flat_map(|rule| rule.check(trace))
+            .collect()
+    }
+
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
+    }
+}
+
+impl Default for RuleRegistry {
+    fn default() -> Self {
+        Self::with_defaults()
+    }
+}
