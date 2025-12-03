@@ -7,11 +7,16 @@ pub use refcount::{RetainReleaseBalance, NoDoubleRelease};
 pub use violation::{Violation, ViolationKind, Severity};
 
 use crate::analysis::EffectTrace;
+use crate::contract::FfiContract;
 
 pub trait Rule: Send + Sync {
     fn id(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn check(&self, trace: &EffectTrace) -> Vec<Violation>;
+    
+    fn check_with_contract(&self, trace: &EffectTrace, _contract: &FfiContract) -> Vec<Violation> {
+        self.check(trace)
+    }
 }
 
 pub struct RuleRegistry {
@@ -41,6 +46,13 @@ impl RuleRegistry {
         self.rules
             .iter()
             .flat_map(|rule| rule.check(trace))
+            .collect()
+    }
+
+    pub fn check_all_with_contract(&self, trace: &EffectTrace, contract: &FfiContract) -> Vec<Violation> {
+        self.rules
+            .iter()
+            .flat_map(|rule| rule.check_with_contract(trace, contract))
             .collect()
     }
 

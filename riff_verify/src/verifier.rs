@@ -2,6 +2,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::analysis::EffectCollector;
+use crate::contract::{ContractLoader, FfiContract};
 use crate::parse::{ParseError, SwiftParser};
 use crate::report::VerificationResult;
 use crate::rules::{RuleRegistry, Violation};
@@ -9,6 +10,7 @@ use crate::rules::{RuleRegistry, Violation};
 pub struct Verifier {
     parser: SwiftParser,
     rules: RuleRegistry,
+    contract: Option<FfiContract>,
 }
 
 #[derive(Debug)]
@@ -45,6 +47,7 @@ impl Verifier {
         Ok(Self {
             parser: SwiftParser::new()?,
             rules: RuleRegistry::with_defaults(),
+            contract: None,
         })
     }
 
@@ -52,7 +55,18 @@ impl Verifier {
         Ok(Self {
             parser: SwiftParser::new()?,
             rules,
+            contract: None,
         })
+    }
+
+    pub fn with_contract(mut self, contract: FfiContract) -> Self {
+        self.contract = Some(contract);
+        self
+    }
+
+    pub fn with_auto_contract(mut self, source: &str, prefix: &str) -> Self {
+        self.contract = Some(ContractLoader::from_swift_source(source, prefix));
+        self
     }
 
     pub fn verify_file(&mut self, path: &Path) -> Result<VerificationResult, VerifyError> {
@@ -63,13 +77,17 @@ impl Verifier {
     pub fn verify_source(&mut self, path: &Path, source: &str) -> Result<VerificationResult, VerifyError> {
         let start = Instant::now();
         
+        let contract = self.contract
+            .clone()
+            .unwrap_or_else(|| ContractLoader::from_swift_source(source, "riff"));
+        
         let units = self.parser.parse_source(path, source)?;
         
         let all_violations: Vec<Violation> = units
             .iter()
             .flat_map(|unit| {
                 let trace = EffectCollector::collect(unit);
-                self.rules.check_all(&trace)
+                self.rules.check_all_with_contract(&trace, &contract)
             })
             .collect();
 

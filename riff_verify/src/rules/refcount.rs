@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{Rule, Violation, ViolationKind};
 use crate::analysis::{Effect, EffectTrace};
+use crate::contract::FfiContract;
 use crate::ir::VarId;
 
 pub struct RetainReleaseBalance;
@@ -16,13 +17,31 @@ impl Rule for RetainReleaseBalance {
     }
 
     fn check(&self, trace: &EffectTrace) -> Vec<Violation> {
-        let mut retained: HashMap<VarId, &crate::source::SourceSpan> = HashMap::new();
+        self.check_impl(trace, None)
+    }
+
+    fn check_with_contract(&self, trace: &EffectTrace, contract: &FfiContract) -> Vec<Violation> {
+        self.check_impl(trace, Some(contract))
+    }
+}
+
+impl RetainReleaseBalance {
+    fn check_impl(&self, trace: &EffectTrace, contract: Option<&FfiContract>) -> Vec<Violation> {
+        let mut retained: HashMap<VarId, RetainInfo> = HashMap::new();
         let mut released: HashSet<VarId> = HashSet::new();
         let mut violations = Vec::new();
 
         trace.iter().for_each(|entry| match &entry.effect {
             Effect::Retain { opaque_handle, .. } => {
-                retained.insert(*opaque_handle, &entry.span);
+                let source_text = entry.span.text().unwrap_or_default().to_string();
+                let is_callback_bridge = contract
+                    .map(|c| c.is_callback_bridge_retain(&source_text))
+                    .unwrap_or(false);
+                
+                retained.insert(*opaque_handle, RetainInfo {
+                    span: entry.span.clone(),
+                    is_callback_bridge,
+                });
             }
             Effect::Release { opaque_handle } | Effect::TakeRetained { opaque_handle, .. } => {
                 if !retained.contains_key(opaque_handle) {
@@ -42,17 +61,22 @@ impl Rule for RetainReleaseBalance {
 
         retained
             .iter()
-            .filter(|(handle, _)| !released.contains(handle))
-            .for_each(|(handle, span)| {
+            .filter(|(handle, info)| !released.contains(handle) && !info.is_callback_bridge)
+            .for_each(|(handle, info)| {
                 violations.push(Violation::new(
                     ViolationKind::RetainLeak { handle: *handle },
                     self.id(),
-                    (*span).clone(),
+                    info.span.clone(),
                 ));
             });
 
         violations
     }
+}
+
+struct RetainInfo {
+    span: crate::source::SourceSpan,
+    is_callback_bridge: bool,
 }
 
 pub struct NoDoubleRelease;
