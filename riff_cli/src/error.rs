@@ -51,6 +51,15 @@ pub enum CliError {
 
     #[error("zip creation failed")]
     ZipFailed { source: std::io::Error },
+
+    #[error("file not found: {0}")]
+    FileNotFound(PathBuf),
+
+    #[error("unsupported language: {0}")]
+    UnsupportedLanguage(String),
+
+    #[error("verification error: {0}")]
+    VerifyError(String),
 }
 
 pub type Result<T> = std::result::Result<T, CliError>;

@@ -14,7 +14,8 @@ use commands::check::CheckOptions;
 use commands::generate::{GenerateOptions, GenerateTarget};
 use commands::init::InitOptions;
 use commands::pack::{PackOptions, PackTarget};
-use commands::{run_build, run_check, run_generate, run_init, run_pack};
+use commands::verify::VerifyOptions;
+use commands::{run_build, run_check, run_generate, run_init, run_pack, run_verify};
 use config::Config;
 use error::{CliError, Result};
 
@@ -75,6 +76,13 @@ enum Commands {
     Release {
         #[arg(value_enum)]
         platform: Option<BuildPlatformArg>,
+    },
+
+    Verify {
+        path: PathBuf,
+
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -186,6 +194,15 @@ fn execute_command(command: Commands) -> Result<()> {
         Commands::Release { platform } => {
             let config = load_config()?;
             run_release(&config, platform)
+        }
+
+        Commands::Verify { path, json } => {
+            let options = VerifyOptions { path, json };
+            run_verify(options).map(|verified| {
+                if !verified {
+                    std::process::exit(1);
+                }
+            })
         }
     }
 }
