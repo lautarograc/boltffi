@@ -8,11 +8,12 @@ use askama::Template;
 pub use marshal::{ParamConversion, ReturnKind};
 pub use names::NamingConvention;
 pub use templates::{
-    CStyleEnumTemplate, FunctionTemplate, PreambleTemplate, RecordTemplate, SealedEnumTemplate,
+    ClassTemplate, CStyleEnumTemplate, FunctionTemplate, PreambleTemplate, RecordTemplate,
+    SealedEnumTemplate,
 };
 pub use types::TypeMapper;
 
-use crate::model::{Enumeration, Function, Module, Record};
+use crate::model::{Class, Enumeration, Function, Module, Record};
 
 pub struct Kotlin;
 
@@ -36,6 +37,11 @@ impl Kotlin {
             .functions
             .iter()
             .for_each(|function| sections.push(Self::render_function(function)));
+
+        module
+            .classes
+            .iter()
+            .for_each(|class| sections.push(Self::render_class(class)));
 
         let mut output = sections
             .into_iter()
@@ -76,12 +82,18 @@ impl Kotlin {
             .render()
             .expect("function template failed")
     }
+
+    pub fn render_class(class: &Class) -> String {
+        ClassTemplate::from_class(class)
+            .render()
+            .expect("class template failed")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Primitive, RecordField, Type, Variant};
+    use crate::model::{Constructor, Method, Parameter, Primitive, Receiver, RecordField, Type, Variant};
 
     #[test]
     fn test_kotlin_type_mapping() {
@@ -171,8 +183,6 @@ mod tests {
 
     #[test]
     fn test_render_function() {
-        use crate::model::Parameter;
-
         let function = Function::new("get_sensor_value")
             .with_param(Parameter::new("sensor_id", Type::Primitive(Primitive::I32)))
             .with_output(Type::Primitive(Primitive::F64));
@@ -181,5 +191,21 @@ mod tests {
         assert!(output.contains("fun getSensorValue"));
         assert!(output.contains("sensorId: Int"));
         assert!(output.contains(": Double"));
+    }
+
+    #[test]
+    fn test_render_class() {
+        let sensor_class = Class::new("sensor")
+            .with_constructor(Constructor::new())
+            .with_method(
+                Method::new("get_reading", Receiver::Ref)
+                    .with_output(Type::Primitive(Primitive::F64)),
+            );
+
+        let output = Kotlin::render_class(&sensor_class);
+        assert!(output.contains("class Sensor"));
+        assert!(output.contains("private val handle: Long"));
+        assert!(output.contains("override fun close()"));
+        assert!(output.contains("fun getReading()"));
     }
 }

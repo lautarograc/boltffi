@@ -1,7 +1,7 @@
 use askama::Template;
 use riff_ffi_rules::naming;
 
-use crate::model::{Enumeration, Function, Module, Record, Type};
+use crate::model::{Class, Enumeration, Function, Module, Record, Type};
 
 use super::marshal::{ParamConversion, ReturnKind};
 use super::{NamingConvention, TypeMapper};
@@ -175,6 +175,108 @@ impl FunctionTemplate {
             inner_type,
             len_fn,
             copy_fn,
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "kotlin/class.txt", escape = "none")]
+pub struct ClassTemplate {
+    pub class_name: String,
+    pub doc: Option<String>,
+    pub ffi_free: String,
+    pub constructors: Vec<ConstructorView>,
+    pub methods: Vec<MethodView>,
+}
+
+pub struct ConstructorView {
+    pub ffi_name: String,
+    pub params: Vec<ParamView>,
+}
+
+pub struct MethodView {
+    pub name: String,
+    pub params: Vec<ParamView>,
+    pub return_type: Option<String>,
+    pub body: String,
+}
+
+impl ClassTemplate {
+    pub fn from_class(class: &Class) -> Self {
+        let class_name = NamingConvention::class_name(&class.name);
+        let ffi_prefix = naming::class_ffi_prefix(&class.name);
+
+        let constructors: Vec<ConstructorView> = class
+            .constructors
+            .iter()
+            .map(|ctor| ConstructorView {
+                ffi_name: format!("{}_new", ffi_prefix),
+                params: ctor
+                    .inputs
+                    .iter()
+                    .map(|param| ParamView {
+                        name: NamingConvention::param_name(&param.name),
+                        kotlin_type: TypeMapper::map_type(&param.param_type),
+                        conversion: ParamConversion::to_ffi(
+                            &NamingConvention::param_name(&param.name),
+                            &param.param_type,
+                        ),
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let methods: Vec<MethodView> = class
+            .methods
+            .iter()
+            .map(|method| {
+                let method_ffi = naming::method_ffi_name(&class.name, &method.name);
+                let return_type = method.output.as_ref().map(TypeMapper::map_type);
+                let body = Self::generate_method_body(method, &method_ffi);
+
+                MethodView {
+                    name: NamingConvention::method_name(&method.name),
+                    params: method
+                        .inputs
+                        .iter()
+                        .map(|param| ParamView {
+                            name: NamingConvention::param_name(&param.name),
+                            kotlin_type: TypeMapper::map_type(&param.param_type),
+                            conversion: ParamConversion::to_ffi(
+                                &NamingConvention::param_name(&param.name),
+                                &param.param_type,
+                            ),
+                        })
+                        .collect(),
+                    return_type,
+                    body,
+                }
+            })
+            .collect();
+
+        Self {
+            class_name,
+            doc: class.doc.clone(),
+            ffi_free: format!("{}_free", ffi_prefix),
+            constructors,
+            methods,
+        }
+    }
+
+    fn generate_method_body(method: &crate::model::Method, ffi_name: &str) -> String {
+        let args = std::iter::once("handle".to_string())
+            .chain(
+                method
+                    .inputs
+                    .iter()
+                    .map(|p| NamingConvention::param_name(&p.name)),
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        match &method.output {
+            Some(_) => format!("return Native.{}({})", ffi_name, args),
+            None => format!("Native.{}({})", ffi_name, args),
         }
     }
 }
