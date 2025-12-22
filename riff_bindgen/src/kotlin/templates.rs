@@ -1,7 +1,7 @@
 use askama::Template;
 use riff_ffi_rules::naming;
 
-use crate::model::{Class, Enumeration, Function, Module, Record, Type};
+use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record, Type};
 
 use super::marshal::{ParamConversion, ReturnKind};
 use super::{NamingConvention, TypeMapper};
@@ -423,6 +423,103 @@ impl NativeTemplate {
                 Type::Vec(_) => (true, "LongByReference".to_string(), "FfiStatus".to_string()),
                 _ => (false, String::new(), TypeMapper::jni_type(ty)),
             },
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "kotlin/callback_trait.txt", escape = "none")]
+pub struct CallbackTraitTemplate {
+    pub doc: Option<String>,
+    pub interface_name: String,
+    pub wrapper_class: String,
+    pub vtable_var: String,
+    pub vtable_type: String,
+    pub bridge_name: String,
+    pub register_fn: String,
+    pub create_fn: String,
+    pub methods: Vec<TraitMethodView>,
+}
+
+pub struct TraitMethodView {
+    pub name: String,
+    pub ffi_name: String,
+    pub params: Vec<TraitParamView>,
+    pub return_type: Option<String>,
+    pub return_jni_type: String,
+    pub has_return: bool,
+    pub has_out_param: bool,
+    pub out_type: String,
+}
+
+pub struct TraitParamView {
+    pub name: String,
+    pub ffi_name: String,
+    pub kotlin_type: String,
+    pub jni_type: String,
+    pub conversion: String,
+}
+
+impl CallbackTraitTemplate {
+    pub fn from_trait(callback_trait: &CallbackTrait, _module: &Module) -> Self {
+        let trait_name = &callback_trait.name;
+        let interface_name = NamingConvention::class_name(trait_name);
+        let wrapper_class = format!("{}Wrapper", interface_name);
+        let vtable_type = format!("{}VTable", interface_name);
+        let ffi_prefix = format!("{}_{}", naming::ffi_prefix(), trait_name);
+
+        let methods: Vec<TraitMethodView> = callback_trait
+            .methods
+            .iter()
+            .map(|method| {
+                let has_return = method.has_return();
+                let return_jni_type = if has_return {
+                    method
+                        .output
+                        .as_ref()
+                        .map(TypeMapper::jni_type)
+                        .unwrap_or_else(|| "Unit".to_string())
+                } else {
+                    "FfiStatus".to_string()
+                };
+
+                TraitMethodView {
+                    name: NamingConvention::method_name(&method.name),
+                    ffi_name: NamingConvention::method_name(&method.name),
+                    params: method
+                        .inputs
+                        .iter()
+                        .map(|p| TraitParamView {
+                            name: NamingConvention::param_name(&p.name),
+                            ffi_name: NamingConvention::param_name(&p.name),
+                            kotlin_type: TypeMapper::map_type(&p.param_type),
+                            jni_type: TypeMapper::jni_type(&p.param_type),
+                            conversion: NamingConvention::param_name(&p.name),
+                        })
+                        .collect(),
+                    return_type: method.output.as_ref().map(TypeMapper::map_type),
+                    return_jni_type,
+                    has_return,
+                    has_out_param: has_return,
+                    out_type: method
+                        .output
+                        .as_ref()
+                        .map(|_| "LongByReference".to_string())
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+
+        Self {
+            doc: callback_trait.doc.clone(),
+            interface_name,
+            wrapper_class,
+            vtable_var: format!("{}VTableImpl", NamingConvention::method_name(trait_name)),
+            vtable_type,
+            bridge_name: format!("{}Bridge", NamingConvention::class_name(trait_name)),
+            register_fn: format!("{}_register_vtable", ffi_prefix),
+            create_fn: format!("{}_create", ffi_prefix),
+            methods,
         }
     }
 }

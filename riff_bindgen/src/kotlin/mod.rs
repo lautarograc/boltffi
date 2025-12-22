@@ -8,12 +8,12 @@ use askama::Template;
 pub use marshal::{ParamConversion, ReturnKind};
 pub use names::NamingConvention;
 pub use templates::{
-    ClassTemplate, CStyleEnumTemplate, FunctionTemplate, NativeTemplate, PreambleTemplate,
-    RecordTemplate, SealedEnumTemplate,
+    CallbackTraitTemplate, ClassTemplate, CStyleEnumTemplate, FunctionTemplate, NativeTemplate,
+    PreambleTemplate, RecordTemplate, SealedEnumTemplate,
 };
 pub use types::TypeMapper;
 
-use crate::model::{Class, Enumeration, Function, Module, Record};
+use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record};
 
 pub struct Kotlin;
 
@@ -42,6 +42,11 @@ impl Kotlin {
             .classes
             .iter()
             .for_each(|class| sections.push(Self::render_class(class)));
+
+        module
+            .callback_traits
+            .iter()
+            .for_each(|cb| sections.push(Self::render_callback_trait(cb, module)));
 
         sections.push(Self::render_native(module));
 
@@ -96,12 +101,21 @@ impl Kotlin {
             .render()
             .expect("native template failed")
     }
+
+    pub fn render_callback_trait(callback_trait: &CallbackTrait, module: &Module) -> String {
+        CallbackTraitTemplate::from_trait(callback_trait, module)
+            .render()
+            .expect("callback trait template failed")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Constructor, Method, Parameter, Primitive, Receiver, RecordField, Type, Variant};
+    use crate::model::{
+        Constructor, Method, Module, Parameter, Primitive, Receiver, RecordField, TraitMethod,
+        TraitMethodParam, Type, Variant,
+    };
 
     #[test]
     fn test_kotlin_type_mapping() {
@@ -227,5 +241,25 @@ mod tests {
         assert!(output.contains("suspend fun fetchData"));
         assert!(output.contains("suspendCancellableCoroutine"));
         assert!(output.contains("FfiCallback"));
+    }
+
+    #[test]
+    fn test_render_callback_trait() {
+        let callback = CallbackTrait::new("data_handler")
+            .with_method(
+                TraitMethod::new("on_data")
+                    .with_param(TraitMethodParam::new("data", Type::Bytes)),
+            )
+            .with_method(TraitMethod::new("on_error").with_param(TraitMethodParam::new(
+                "code",
+                Type::Primitive(Primitive::I32),
+            )));
+
+        let module = Module::new("test");
+        let output = Kotlin::render_callback_trait(&callback, &module);
+        assert!(output.contains("interface DataHandler"));
+        assert!(output.contains("fun onData(`data`: ByteArray)"));
+        assert!(output.contains("fun onError(code: Int)"));
+        assert!(output.contains("DataHandlerBridge"));
     }
 }
