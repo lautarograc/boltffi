@@ -2,7 +2,7 @@ use askama::Template;
 use riff_ffi_rules::naming;
 
 use super::marshal::{JniParamInfo, JniReturnKind};
-use crate::model::{Class, Function, Method, Module, Type};
+use crate::model::{Class, Function, Method, Module, Primitive, Type};
 
 #[derive(Template)]
 #[template(path = "kotlin/jni_glue.txt", escape = "none")]
@@ -23,11 +23,10 @@ pub struct JniFunctionView {
     pub params: Vec<JniParamInfo>,
     pub is_vec: bool,
     pub vec_len_ffi: String,
-    pub vec_len_jni_name: String,
     pub vec_copy_ffi: String,
-    pub vec_copy_jni_name: String,
     pub vec_c_type: String,
     pub vec_jni_array_type: String,
+    pub vec_new_array_fn: String,
 }
 
 pub struct JniClassView {
@@ -66,7 +65,7 @@ impl JniGenerator {
 impl JniGlueTemplate {
     pub fn from_module(module: &Module, package: &str) -> Self {
         let prefix = naming::ffi_prefix().to_string();
-        let jni_prefix = package.replace('.', "_").replace('-', "_");
+        let jni_prefix = package.replace('_', "_1").replace('.', "_").replace('-', "_1");
 
         let functions: Vec<JniFunctionView> = module
             .functions
@@ -149,21 +148,20 @@ impl JniGlueTemplate {
             )
         };
 
-        let (is_vec, vec_len_ffi, vec_len_jni_name, vec_copy_ffi, vec_copy_jni_name, vec_c_type, vec_jni_array_type) =
+        let (is_vec, vec_len_ffi, vec_copy_ffi, vec_c_type, vec_jni_array_type, vec_new_array_fn) =
             if let Some(Type::Vec(inner)) = &func.output {
                 let len_ffi = naming::function_ffi_vec_len(&func.name);
                 let copy_ffi = naming::function_ffi_vec_copy_into(&func.name);
                 (
                     true,
-                    len_ffi.clone(),
-                    format!("Java_{}_Native_{}", jni_prefix, len_ffi.replace('_', "_1")),
-                    copy_ffi.clone(),
-                    format!("Java_{}_Native_{}", jni_prefix, copy_ffi.replace('_', "_1")),
+                    len_ffi,
+                    copy_ffi,
                     Self::primitive_c_type(inner),
                     Self::primitive_jni_array_type(inner),
+                    Self::new_array_fn(inner),
                 )
             } else {
-                (false, String::new(), String::new(), String::new(), String::new(), String::new(), String::new())
+                (false, String::new(), String::new(), String::new(), String::new(), String::new())
             };
 
         JniFunctionView {
@@ -175,12 +173,24 @@ impl JniGlueTemplate {
             params,
             is_vec,
             vec_len_ffi,
-            vec_len_jni_name,
             vec_copy_ffi,
-            vec_copy_jni_name,
             vec_c_type,
             vec_jni_array_type,
+            vec_new_array_fn,
         }
+    }
+
+    fn new_array_fn(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(Primitive::I32) | Type::Primitive(Primitive::U32) => "NewIntArray",
+            Type::Primitive(Primitive::I64) | Type::Primitive(Primitive::U64) | Type::Primitive(Primitive::Usize) | Type::Primitive(Primitive::Isize) => "NewLongArray",
+            Type::Primitive(Primitive::F32) => "NewFloatArray",
+            Type::Primitive(Primitive::F64) => "NewDoubleArray",
+            Type::Primitive(Primitive::I8) | Type::Primitive(Primitive::U8) => "NewByteArray",
+            Type::Primitive(Primitive::I16) | Type::Primitive(Primitive::U16) => "NewShortArray",
+            Type::Primitive(Primitive::Bool) => "NewBooleanArray",
+            _ => "NewLongArray",
+        }.to_string()
     }
 
     fn primitive_c_type(ty: &Type) -> String {

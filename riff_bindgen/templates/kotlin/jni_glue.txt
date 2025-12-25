@@ -8,39 +8,25 @@
 {%- for func in functions %}
 {%- if func.is_vec %}
 
-JNIEXPORT jlong JNICALL {{ func.vec_len_jni_name }}(JNIEnv *env, jclass cls{{ func.jni_params }}) {
+JNIEXPORT {{ func.vec_jni_array_type }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass cls{{ func.jni_params }}) {
 {%- for param in func.params %}
 {%- if param.is_string %}
     const char* _{{ param.name }}_c = {{ param.name }} ? (*env)->GetStringUTFChars(env, {{ param.name }}, NULL) : NULL;
 {%- endif %}
 {%- endfor %}
-    jlong _result = (jlong){{ func.vec_len_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    jlong _len = (jlong){{ func.vec_len_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    {{ func.vec_jni_array_type }} _result = (*env)->{{ func.vec_new_array_fn }}(env, (jsize)_len);
+    if (!_result) return NULL;
+    {{ func.vec_c_type }}* _dst = ({{ func.vec_c_type }}*)(*env)->GetPrimitiveArrayCritical(env, _result, NULL);
+    uintptr_t _written = 0;
+    {{ func.vec_copy_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}, {% endfor %}_dst, (uintptr_t)_len, &_written);
+    (*env)->ReleasePrimitiveArrayCritical(env, _result, _dst, 0);
 {%- for param in func.params %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
 {%- endif %}
 {%- endfor %}
     return _result;
-}
-
-JNIEXPORT jint JNICALL {{ func.vec_copy_jni_name }}(JNIEnv *env, jclass cls{{ func.jni_params }}, {{ func.vec_jni_array_type }} dst, jlong dstCap, jlongArray written) {
-{%- for param in func.params %}
-{%- if param.is_string %}
-    const char* _{{ param.name }}_c = {{ param.name }} ? (*env)->GetStringUTFChars(env, {{ param.name }}, NULL) : NULL;
-{%- endif %}
-{%- endfor %}
-    {{ func.vec_c_type }}* _dst = ({{ func.vec_c_type }}*)(*env)->GetPrimitiveArrayCritical(env, dst, NULL);
-    uintptr_t _written = 0;
-    FfiStatus _status = {{ func.vec_copy_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}, {% endfor %}_dst, (uintptr_t)dstCap, &_written);
-    (*env)->ReleasePrimitiveArrayCritical(env, dst, _dst, 0);
-{%- for param in func.params %}
-{%- if param.is_string %}
-    if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
-{%- endif %}
-{%- endfor %}
-    jlong _writtenVal = (jlong)_written;
-    (*env)->SetLongArrayRegion(env, written, 0, 1, &_writtenVal);
-    return (jint)_status.code;
 }
 {%- else %}
 

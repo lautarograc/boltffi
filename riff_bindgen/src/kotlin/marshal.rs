@@ -130,7 +130,7 @@ impl JniReturnKind {
         match ty {
             None | Some(Type::Void) => Self::Void,
             Some(Type::Primitive(p)) => Self::Primitive {
-                jni_type: super::TypeMapper::jni_type(&Type::Primitive(*p)),
+                jni_type: super::TypeMapper::c_jni_type(&Type::Primitive(*p)),
             },
             Some(Type::String) => Self::String {
                 ffi_name: naming::function_ffi_name(func_name),
@@ -180,8 +180,8 @@ pub struct JniParamInfo {
 impl JniParamInfo {
     pub fn from_param(name: &str, ty: &Type) -> Self {
         Self {
-            name: super::NamingConvention::param_name(name),
-            jni_type: super::TypeMapper::jni_type(ty),
+            name: name.to_string(),
+            jni_type: super::TypeMapper::c_jni_type(ty),
             is_string: matches!(ty, Type::String),
             is_handle: matches!(ty, Type::Object(_) | Type::BoxedTrait(_)),
         }
