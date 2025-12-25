@@ -69,7 +69,15 @@ pub struct SealedEnumTemplate {
 
 pub struct SealedVariantView {
     pub name: String,
-    pub fields: Vec<FieldView>,
+    pub is_tuple: bool,
+    pub fields: Vec<SealedFieldView>,
+}
+
+pub struct SealedFieldView {
+    pub name: String,
+    pub index: usize,
+    pub kotlin_type: String,
+    pub is_tuple: bool,
 }
 
 impl SealedEnumTemplate {
@@ -77,16 +85,29 @@ impl SealedEnumTemplate {
         let variants = enumeration
             .variants
             .iter()
-            .map(|variant| SealedVariantView {
-                name: NamingConvention::class_name(&variant.name),
-                fields: variant
-                    .fields
-                    .iter()
-                    .map(|field| FieldView {
-                        name: NamingConvention::property_name(&field.name),
-                        kotlin_type: TypeMapper::map_type(&field.field_type),
-                    })
-                    .collect(),
+            .map(|variant| {
+                let is_tuple = variant.fields.iter().any(|f| 
+                    f.name.starts_with('_') && f.name.chars().nth(1).map_or(false, |c| c.is_ascii_digit())
+                );
+                SealedVariantView {
+                    name: NamingConvention::class_name(&variant.name),
+                    is_tuple,
+                    fields: variant
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, field)| {
+                            let field_is_tuple = field.name.starts_with('_') && 
+                                field.name.chars().nth(1).map_or(false, |c| c.is_ascii_digit());
+                            SealedFieldView {
+                                name: NamingConvention::property_name(&field.name),
+                                index: i,
+                                kotlin_type: TypeMapper::map_type(&field.field_type),
+                                is_tuple: field_is_tuple,
+                            }
+                        })
+                        .collect(),
+                }
             })
             .collect();
 
@@ -287,10 +308,7 @@ impl ClassTemplate {
 
         match &method.output {
             Some(ty) if ty.is_primitive() => format!("return Native.{}({})", ffi_name, args),
-            Some(_) => format!(
-                "val status = Native.{}({})\n        checkStatus(status)\n        return result",
-                ffi_name, args
-            ),
+            Some(_) => format!("return Native.{}({})", ffi_name, args),
             None => format!(
                 "val status = Native.{}({})\n        checkStatus(status)",
                 ffi_name, args
@@ -448,12 +466,15 @@ impl NativeTemplate {
 
     fn analyze_return(output: &Option<Type>) -> (bool, String, String) {
         match output {
-            None => (false, String::new(), "FfiStatus".to_string()),
+            None => (false, String::new(), "Int".to_string()),
             Some(ty) => match ty {
                 Type::Primitive(_) => (false, String::new(), TypeMapper::jni_type(ty)),
-                Type::String => (true, "FfiString.ByReference".to_string(), "FfiStatus".to_string()),
-                Type::Bytes => (true, "FfiBytes.ByReference".to_string(), "FfiStatus".to_string()),
-                Type::Vec(_) => (true, "LongByReference".to_string(), "FfiStatus".to_string()),
+                Type::String => (false, String::new(), "String?".to_string()),
+                Type::Bytes => (false, String::new(), "ByteArray?".to_string()),
+                Type::Vec(inner) => match inner.as_ref() {
+                    Type::Primitive(_) => (false, String::new(), TypeMapper::jni_type(ty)),
+                    _ => (false, String::new(), "Long".to_string()),
+                },
                 _ => (false, String::new(), TypeMapper::jni_type(ty)),
             },
         }

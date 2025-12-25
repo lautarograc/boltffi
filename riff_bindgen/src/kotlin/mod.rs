@@ -263,16 +263,14 @@ mod tests {
     }
 
     #[test]
-    fn test_render_async_function() {
+    fn test_render_string_function() {
         let function = Function::new("fetch_data")
-            .with_output(Type::String)
-            .make_async();
+            .with_output(Type::String);
 
         let module = Module::new("test");
         let output = Kotlin::render_function(&function, &module);
-        assert!(output.contains("suspend fun fetchData"));
-        assert!(output.contains("suspendCancellableCoroutine"));
-        assert!(output.contains("FfiCallback"));
+        assert!(output.contains("fun fetchData(): String"));
+        assert!(output.contains("Native.riff_fetch_data"));
     }
 
     #[test]
@@ -308,11 +306,11 @@ mod tests {
             );
 
         let output = Kotlin::render_native(&module);
-        assert!(output.contains("interface NativeLib : Library"));
-        assert!(output.contains("riff_get_version"));
-        assert!(output.contains("riff_sensor_new"));
-        assert!(output.contains("riff_sensor_free"));
-        assert!(output.contains("riff_sensor_read"));
-        assert!(output.contains("riff_cancel_async"));
+        assert!(output.contains("private object Native"));
+        assert!(output.contains("System.loadLibrary"));
+        assert!(output.contains("@JvmStatic external fun riff_get_version"));
+        assert!(output.contains("@JvmStatic external fun riff_sensor_new"));
+        assert!(output.contains("@JvmStatic external fun riff_sensor_free"));
+        assert!(output.contains("@JvmStatic external fun riff_sensor_read"));
     }
 }

@@ -51,7 +51,17 @@ impl TypeMapper {
             Type::Object(_) | Type::BoxedTrait(_) => "Long".into(),
             Type::Record(name) => NamingConvention::class_name(name),
             Type::Enum(_) => "Int".into(),
-            Type::Vec(_) | Type::Slice(_) | Type::MutSlice(_) => "Long".into(),
+            Type::Vec(inner) | Type::Slice(inner) | Type::MutSlice(inner) => {
+                match inner.as_ref() {
+                    Type::Primitive(Primitive::I32) => "IntArray".into(),
+                    Type::Primitive(Primitive::I64) => "LongArray".into(),
+                    Type::Primitive(Primitive::F32) => "FloatArray".into(),
+                    Type::Primitive(Primitive::F64) => "DoubleArray".into(),
+                    Type::Primitive(Primitive::U8) | Type::Primitive(Primitive::I8) => "ByteArray".into(),
+                    Type::Primitive(Primitive::Bool) => "BooleanArray".into(),
+                    _ => "Long".into(),
+                }
+            }
             Type::Option(inner) => format!("{}?", Self::jni_type(inner)),
             Type::Result { ok, .. } => Self::jni_type(ok),
             Type::Callback(_) => "Long".into(),
@@ -74,6 +84,45 @@ impl TypeMapper {
             Primitive::Bool => "Boolean",
             Primitive::Usize => "Long",
             Primitive::Isize => "Long",
+        }
+        .into()
+    }
+
+    pub fn c_jni_type(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(primitive) => Self::c_jni_primitive(primitive),
+            Type::String => "jstring".into(),
+            Type::Bytes => "jbyteArray".into(),
+            Type::Object(_) | Type::BoxedTrait(_) => "jlong".into(),
+            Type::Record(_) => "jlong".into(),
+            Type::Enum(_) => "jint".into(),
+            Type::Vec(inner) | Type::Slice(inner) | Type::MutSlice(inner) => {
+                match inner.as_ref() {
+                    Type::Primitive(Primitive::I32) => "jintArray".into(),
+                    Type::Primitive(Primitive::I64) => "jlongArray".into(),
+                    Type::Primitive(Primitive::F32) => "jfloatArray".into(),
+                    Type::Primitive(Primitive::F64) => "jdoubleArray".into(),
+                    Type::Primitive(Primitive::U8) | Type::Primitive(Primitive::I8) => "jbyteArray".into(),
+                    Type::Primitive(Primitive::Bool) => "jbooleanArray".into(),
+                    _ => "jlong".into(),
+                }
+            }
+            Type::Option(inner) => Self::c_jni_type(inner),
+            Type::Result { ok, .. } => Self::c_jni_type(ok),
+            Type::Callback(_) => "jlong".into(),
+            Type::Void => "void".into(),
+        }
+    }
+
+    fn c_jni_primitive(primitive: &Primitive) -> String {
+        match primitive {
+            Primitive::I8 | Primitive::U8 => "jbyte",
+            Primitive::I16 | Primitive::U16 => "jshort",
+            Primitive::I32 | Primitive::U32 => "jint",
+            Primitive::I64 | Primitive::U64 | Primitive::Usize | Primitive::Isize => "jlong",
+            Primitive::F32 => "jfloat",
+            Primitive::F64 => "jdouble",
+            Primitive::Bool => "jboolean",
         }
         .into()
     }
@@ -135,9 +184,18 @@ mod tests {
     }
 
     #[test]
-    fn test_jni_type_vec_is_long() {
-        let vec_type = Type::Vec(Box::new(Type::Primitive(Primitive::I32)));
-        assert_eq!(TypeMapper::jni_type(&vec_type), "Long");
+    fn test_jni_type_vec_primitives() {
+        let i32_vec = Type::Vec(Box::new(Type::Primitive(Primitive::I32)));
+        assert_eq!(TypeMapper::jni_type(&i32_vec), "IntArray");
+        
+        let f64_vec = Type::Vec(Box::new(Type::Primitive(Primitive::F64)));
+        assert_eq!(TypeMapper::jni_type(&f64_vec), "DoubleArray");
+        
+        let u8_vec = Type::Vec(Box::new(Type::Primitive(Primitive::U8)));
+        assert_eq!(TypeMapper::jni_type(&u8_vec), "ByteArray");
+        
+        let record_vec = Type::Vec(Box::new(Type::Record("Point".into())));
+        assert_eq!(TypeMapper::jni_type(&record_vec), "Long");
     }
 
     #[test]
