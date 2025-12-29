@@ -223,57 +223,36 @@ impl JniGlueTemplate {
 
         let return_kind =
             JniReturnKind::from_type_with_module(func.output.as_ref(), &func.name, module);
-        let mut params: Vec<JniParamInfo> = func
+        let params: Vec<JniParamInfo> = func
             .inputs
             .iter()
-            .map(|param| JniParamInfo::from_param(&param.name, &param.param_type))
+            .map(|param| {
+                JniParamInfo::from_param_with_module(&param.name, &param.param_type, module)
+            })
             .collect();
-
-        for param in params.iter_mut() {
-            if let Some(record_name) = &param.record_name {
-                param.record_struct_size = module
-                    .records
-                    .iter()
-                    .find(|record| &record.name == record_name)
-                    .map(|record| record.struct_size().as_usize())
-                    .unwrap_or(0);
-            }
-
-            if let Some(enum_name) = &param.data_enum_name {
-                let enumeration = module.enums.iter().find(|e| &e.name == enum_name);
-                if let Some(e) = enumeration {
-                    if e.is_data_enum() {
-                        param.data_enum_struct_size =
-                            crate::model::DataEnumLayout::from_enum(e)
-                                .map(|l| l.struct_size().as_usize())
-                                .unwrap_or(0);
-                        param.jni_type = "jobject".to_string();
-                    } else {
-                        param.data_enum_name = None;
-                    }
-                }
-            }
-        }
 
         let jni_return = return_kind.jni_return_type().to_string();
         let jni_params = Self::format_jni_params(&params);
         let vec_return = VecReturnKind::from_output(&func.output, &func.name, module);
+        let is_data_enum_return = return_kind.is_data_enum();
+        let data_enum_return_name = return_kind
+            .data_enum_name()
+            .unwrap_or_default()
+            .to_string();
+        let data_enum_return_size = return_kind.data_enum_struct_size();
 
         JniFunctionView {
             ffi_name,
             jni_name,
             jni_return,
             jni_params,
-            return_kind: return_kind.clone(),
+            return_kind,
             params,
             is_vec: vec_return.is_primitive(),
             is_vec_record: vec_return.is_record(),
-            is_data_enum_return: return_kind.is_data_enum(),
-            data_enum_return_name: return_kind
-                .data_enum_name()
-                .unwrap_or_default()
-                .to_string(),
-            data_enum_return_size: return_kind.data_enum_struct_size(),
+            is_data_enum_return,
+            data_enum_return_name,
+            data_enum_return_size,
             vec_len_ffi: Self::extract_len_ffi(&vec_return),
             vec_copy_ffi: Self::extract_copy_ffi(&vec_return),
             vec_c_type: Self::extract_c_type(&vec_return),

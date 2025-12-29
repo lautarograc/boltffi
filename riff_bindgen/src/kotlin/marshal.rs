@@ -1,4 +1,4 @@
-use crate::model::{Primitive, Type};
+use crate::model::{DataEnumLayout, Module, Primitive, Type};
 
 #[derive(Debug, Clone)]
 pub enum ReturnKind {
@@ -253,14 +253,14 @@ impl JniReturnKind {
     pub fn from_type_with_module(
         ty: Option<&Type>,
         func_name: &str,
-        module: &crate::model::Module,
+        module: &Module,
     ) -> Self {
         match ty {
             Some(Type::Enum(enum_name)) => {
                 let enumeration = module.enums.iter().find(|e| &e.name == enum_name);
                 match enumeration {
                     Some(e) if e.is_data_enum() => {
-                        let layout = crate::model::DataEnumLayout::from_enum(e);
+                        let layout = DataEnumLayout::from_enum(e);
                         Self::DataEnum {
                             enum_name: super::NamingConvention::class_name(enum_name),
                             struct_size: layout.map(|l| l.struct_size().as_usize()).unwrap_or(0),
@@ -319,6 +319,25 @@ impl JniReturnKind {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct ArrayInfo {
+    primitive: Option<Primitive>,
+    is_mutable: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RecordInfo {
+    name: Option<String>,
+    struct_size: usize,
+    is_mutable: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DataEnumInfo {
+    name: Option<String>,
+    struct_size: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct JniParamInfo {
     pub name: String,
@@ -335,28 +354,16 @@ pub struct JniParamInfo {
 }
 
 impl JniParamInfo {
+    /// Simple constructor for class methods - doesn't detect data enums
     pub fn from_param(name: &str, ty: &Type) -> Self {
-        let (array_primitive, array_is_mutable) = match ty {
-            Type::Vec(inner) | Type::Slice(inner) | Type::MutSlice(inner) => match inner.as_ref() {
-                Type::Primitive(primitive) => (Some(*primitive), matches!(ty, Type::MutSlice(_))),
-                _ => (None, false),
-            },
-            _ => (None, false),
-        };
+        let array_info = Self::extract_array_info(ty);
 
         let (record_name, record_is_mutable) = match ty {
             Type::Vec(inner) | Type::Slice(inner) | Type::MutSlice(inner) => match inner.as_ref() {
-                Type::Record(record_name) => {
-                    (Some(record_name.clone()), matches!(ty, Type::MutSlice(_)))
-                }
+                Type::Record(name) => (Some(name.clone()), matches!(ty, Type::MutSlice(_))),
                 _ => (None, false),
             },
             _ => (None, false),
-        };
-
-        let data_enum_name = match ty {
-            Type::Enum(enum_name) => Some(enum_name.clone()),
-            _ => None,
         };
 
         Self {
@@ -364,14 +371,106 @@ impl JniParamInfo {
             jni_type: super::TypeMapper::c_jni_type(ty),
             is_string: matches!(ty, Type::String),
             is_handle: matches!(ty, Type::Object(_) | Type::BoxedTrait(_)),
-            array_primitive,
-            array_is_mutable,
+            array_primitive: array_info.primitive,
+            array_is_mutable: array_info.is_mutable,
             record_name,
             record_struct_size: 0,
             record_is_mutable,
-            data_enum_name,
+            data_enum_name: None,
             data_enum_struct_size: 0,
         }
+    }
+
+    pub fn from_param_with_module(
+        name: &str,
+        ty: &Type,
+        module: &Module,
+    ) -> Self {
+        let array_info = Self::extract_array_info(ty);
+        let record_info = Self::extract_record_info(ty, module);
+        let enum_info = Self::extract_enum_info(ty, module);
+
+        let jni_type = Self::compute_jni_type(ty, &enum_info);
+
+        Self {
+            name: name.to_string(),
+            jni_type,
+            is_string: matches!(ty, Type::String),
+            is_handle: matches!(ty, Type::Object(_) | Type::BoxedTrait(_)),
+            array_primitive: array_info.primitive,
+            array_is_mutable: array_info.is_mutable,
+            record_name: record_info.name,
+            record_struct_size: record_info.struct_size,
+            record_is_mutable: record_info.is_mutable,
+            data_enum_name: enum_info.name,
+            data_enum_struct_size: enum_info.struct_size,
+        }
+    }
+
+    fn extract_array_info(ty: &Type) -> ArrayInfo {
+        match ty {
+            Type::Vec(inner) | Type::Slice(inner) | Type::MutSlice(inner) => match inner.as_ref() {
+                Type::Primitive(primitive) => ArrayInfo {
+                    primitive: Some(*primitive),
+                    is_mutable: matches!(ty, Type::MutSlice(_)),
+                },
+                _ => ArrayInfo::default(),
+            },
+            _ => ArrayInfo::default(),
+        }
+    }
+
+    fn extract_record_info(ty: &Type, module: &Module) -> RecordInfo {
+        match ty {
+            Type::Vec(inner) | Type::Slice(inner) | Type::MutSlice(inner) => match inner.as_ref() {
+                Type::Record(record_name) => {
+                    let struct_size = module
+                        .records
+                        .iter()
+                        .find(|r| &r.name == record_name)
+                        .map(|r| r.struct_size().as_usize())
+                        .unwrap_or(0);
+
+                    RecordInfo {
+                        name: Some(record_name.clone()),
+                        struct_size,
+                        is_mutable: matches!(ty, Type::MutSlice(_)),
+                    }
+                }
+                _ => RecordInfo::default(),
+            },
+            _ => RecordInfo::default(),
+        }
+    }
+
+    fn extract_enum_info(ty: &Type, module: &Module) -> DataEnumInfo {
+        let Type::Enum(enum_name) = ty else {
+            return DataEnumInfo::default();
+        };
+
+        let Some(enumeration) = module.enums.iter().find(|e| &e.name == enum_name) else {
+            return DataEnumInfo::default();
+        };
+
+        if !enumeration.is_data_enum() {
+            return DataEnumInfo::default();
+        }
+
+        let struct_size = DataEnumLayout::from_enum(enumeration)
+            .map(|layout| layout.struct_size().as_usize())
+            .unwrap_or(0);
+
+        DataEnumInfo {
+            name: Some(enum_name.clone()),
+            struct_size,
+        }
+    }
+
+    fn compute_jni_type(ty: &Type, enum_info: &DataEnumInfo) -> String {
+        if enum_info.name.is_some() {
+            return "jobject".to_string();
+        }
+        super::TypeMapper::c_jni_type(ty)
     }
 
     pub fn jni_param_decl(&self) -> String {
@@ -513,5 +612,91 @@ mod tests {
             ParamConversion::to_ffi("count", &Type::Primitive(Primitive::I32)),
             "count"
         );
+    }
+
+    #[test]
+    fn test_jni_param_data_enum() {
+        use crate::model::{Enumeration, RecordField, Variant};
+
+        let mut data_enum = Enumeration::new("Result");
+        data_enum.variants.push(
+            Variant::new("Ok").with_field(RecordField::new("value", Type::Primitive(Primitive::I32)))
+        );
+        data_enum.variants.push(
+            Variant::new("Err").with_field(RecordField::new("code", Type::Primitive(Primitive::I32)))
+        );
+
+        let mut module = Module::new("test");
+        module.enums.push(data_enum);
+
+        let param = JniParamInfo::from_param_with_module("result", &Type::Enum("Result".into()), &module);
+
+        assert!(param.data_enum_name.is_some());
+        assert_eq!(param.data_enum_name.as_deref(), Some("Result"));
+        assert!(param.data_enum_struct_size > 0);
+        assert_eq!(param.jni_type, "jobject");
+    }
+
+    #[test]
+    fn test_jni_param_c_style_enum() {
+        use crate::model::{Enumeration, Variant};
+
+        let mut c_style_enum = Enumeration::new("Status");
+        c_style_enum.variants.push(Variant::new("Ok"));
+        c_style_enum.variants.push(Variant::new("Error"));
+
+        let mut module = Module::new("test");
+        module.enums.push(c_style_enum);
+
+        let param = JniParamInfo::from_param_with_module("status", &Type::Enum("Status".into()), &module);
+
+        assert!(param.data_enum_name.is_none());
+        assert_eq!(param.data_enum_struct_size, 0);
+        assert_eq!(param.jni_type, "jint");
+    }
+
+    #[test]
+    fn test_jni_return_kind_data_enum() {
+        use crate::model::{Enumeration, RecordField, Variant};
+
+        let mut data_enum = Enumeration::new("Response");
+        data_enum.variants.push(
+            Variant::new("Success").with_field(RecordField::new("data", Type::Primitive(Primitive::I64)))
+        );
+
+        let mut module = Module::new("test");
+        module.enums.push(data_enum);
+
+        let return_kind = JniReturnKind::from_type_with_module(
+            Some(&Type::Enum("Response".into())),
+            "get_response",
+            &module,
+        );
+
+        assert!(return_kind.is_data_enum());
+        assert_eq!(return_kind.data_enum_name(), Some("Response"));
+        assert!(return_kind.data_enum_struct_size() > 0);
+        assert_eq!(return_kind.jni_return_type(), "jobject");
+    }
+
+    #[test]
+    fn test_jni_return_kind_c_style_enum() {
+        use crate::model::{Enumeration, Variant};
+
+        let mut c_style_enum = Enumeration::new("Status");
+        c_style_enum.variants.push(Variant::new("Active"));
+
+        let mut module = Module::new("test");
+        module.enums.push(c_style_enum);
+
+        let return_kind = JniReturnKind::from_type_with_module(
+            Some(&Type::Enum("Status".into())),
+            "get_status",
+            &module,
+        );
+
+        assert!(return_kind.is_c_style_enum());
+        assert!(!return_kind.is_data_enum());
+        assert_eq!(return_kind.jni_return_type(), "jint");
     }
 }
