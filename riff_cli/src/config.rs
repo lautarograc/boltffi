@@ -23,17 +23,29 @@ pub struct PackageConfig {
     pub crate_name: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorStyle {
+    #[default]
+    Throwing,
+    Result,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SwiftConfig {
     pub module_name: Option<String>,
     pub output: PathBuf,
     pub tools_version: Option<String>,
+    #[serde(default)]
+    pub error_style: ErrorStyle,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct KotlinConfig {
     pub package: String,
     pub output: PathBuf,
+    #[serde(default)]
+    pub error_style: ErrorStyle,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
