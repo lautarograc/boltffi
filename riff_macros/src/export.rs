@@ -5,7 +5,7 @@ use syn::ItemFn;
 
 use crate::params::{FfiParams, transform_params, transform_params_async};
 use crate::returns::{
-    ReturnKind, classify_async_return, classify_return, get_complete_conversion,
+    OptionReturnAbi, ReturnKind, classify_async_return, classify_return, get_complete_conversion,
     get_default_ffi_value, get_ffi_return_type, get_rust_return_type,
 };
 use crate::safety;
@@ -19,6 +19,14 @@ fn is_reference_type(ty: &syn::Type) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_string_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(path) = ty {
+        let type_str = quote::quote!(#path).to_string().replace(' ', "");
+        return type_str == "String" || type_str == "std::string::String";
+    }
+    false
 }
 
 pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
@@ -110,7 +118,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                                 *out_ok = crate::FfiString::from(value);
                                 crate::FfiStatus::OK
                             }
-                            Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                            Err(e) => {
+                                *out_err = crate::FfiError::from(e.to_string());
+                                crate::FfiStatus::INTERNAL_ERROR
+                            }
                         }
                     }
                 } else {
@@ -120,7 +131,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                                 *out_ok = crate::FfiString::from(value);
                                 crate::FfiStatus::OK
                             }
-                            Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                            Err(e) => {
+                                *out_err = crate::FfiError::from(e.to_string());
+                                crate::FfiStatus::INTERNAL_ERROR
+                            }
                         }
                     }
                 }
@@ -163,9 +177,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                         #[unsafe(no_mangle)]
                         #fn_vis unsafe extern "C" fn #export_ident(
                             #(#ffi_params),*,
-                            out_ok: *mut crate::FfiString
+                            out_ok: *mut crate::FfiString,
+                            out_err: *mut crate::FfiError
                         ) -> crate::FfiStatus {
-                            if out_ok.is_null() {
+                            if out_ok.is_null() || out_err.is_null() {
                                 return crate::FfiStatus::NULL_POINTER;
                             }
                             #body
@@ -177,9 +192,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
 
                         #[unsafe(no_mangle)]
                         #fn_vis unsafe extern "C" fn #export_ident(
-                            out_ok: *mut crate::FfiString
+                            out_ok: *mut crate::FfiString,
+                            out_err: *mut crate::FfiError
                         ) -> crate::FfiStatus {
-                            if out_ok.is_null() {
+                            if out_ok.is_null() || out_err.is_null() {
                                 return crate::FfiStatus::NULL_POINTER;
                             }
                             #body
@@ -232,7 +248,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                                 *out_ok = value;
                                 crate::FfiStatus::OK
                             }
-                            Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                            Err(e) => {
+                                *out_err = crate::FfiError::from(e.to_string());
+                                crate::FfiStatus::INTERNAL_ERROR
+                            }
                         }
                     }
                 } else {
@@ -242,7 +261,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                                 *out_ok = value;
                                 crate::FfiStatus::OK
                             }
-                            Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                            Err(e) => {
+                                *out_err = crate::FfiError::from(e.to_string());
+                                crate::FfiStatus::INTERNAL_ERROR
+                            }
                         }
                     }
                 }
@@ -285,9 +307,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                         #[unsafe(no_mangle)]
                         #fn_vis unsafe extern "C" fn #export_ident(
                             #(#ffi_params),*,
-                            out_ok: *mut #ok
+                            out_ok: *mut #ok,
+                            out_err: *mut crate::FfiError
                         ) -> crate::FfiStatus {
-                            if out_ok.is_null() {
+                            if out_ok.is_null() || out_err.is_null() {
                                 return crate::FfiStatus::NULL_POINTER;
                             }
                             #body
@@ -299,9 +322,10 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
 
                         #[unsafe(no_mangle)]
                         #fn_vis unsafe extern "C" fn #export_ident(
-                            out_ok: *mut #ok
+                            out_ok: *mut #ok,
+                            out_err: *mut crate::FfiError
                         ) -> crate::FfiStatus {
-                            if out_ok.is_null() {
+                            if out_ok.is_null() || out_err.is_null() {
                                 return crate::FfiStatus::NULL_POINTER;
                             }
                             #body
@@ -351,14 +375,20 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                         #(#conversions)*
                         match #fn_name(#(#call_args),*) {
                             Ok(()) => crate::FfiStatus::OK,
-                            Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                            Err(e) => {
+                                *out_err = crate::FfiError::from(e.to_string());
+                                crate::FfiStatus::INTERNAL_ERROR
+                            }
                         }
                     }
                 } else {
                     quote! {
                         match #fn_name(#(#call_args),*) {
                             Ok(()) => crate::FfiStatus::OK,
-                            Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                            Err(e) => {
+                                *out_err = crate::FfiError::from(e.to_string());
+                                crate::FfiStatus::INTERNAL_ERROR
+                            }
                         }
                     }
                 }
@@ -394,8 +424,12 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
 
                         #[unsafe(no_mangle)]
                         #fn_vis unsafe extern "C" fn #export_ident(
-                            #(#ffi_params),*
+                            #(#ffi_params),*,
+                            out_err: *mut crate::FfiError
                         ) -> crate::FfiStatus {
+                            if out_err.is_null() {
+                                return crate::FfiStatus::NULL_POINTER;
+                            }
                             #body
                         }
                     }
@@ -404,7 +438,12 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                         #input
 
                         #[unsafe(no_mangle)]
-                        #fn_vis unsafe extern "C" fn #export_ident() -> crate::FfiStatus {
+                        #fn_vis unsafe extern "C" fn #export_ident(
+                            out_err: *mut crate::FfiError
+                        ) -> crate::FfiStatus {
+                            if out_err.is_null() {
+                                return crate::FfiStatus::NULL_POINTER;
+                            }
                             #body
                         }
                     }
@@ -443,11 +482,39 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
             }
         }
         ReturnKind::Vec(inner_ty) => {
-            let len_fn_name = syn::Ident::new(&format!("{}_len", export_name), fn_name.span());
-            let copy_fn_name =
-                syn::Ident::new(&format!("{}_copy_into", export_name), fn_name.span());
-
             let body = if has_conversions {
+                quote! {
+                    #(#conversions)*
+                    crate::FfiBuf::from_vec(#fn_name(#(#call_args),*))
+                }
+            } else {
+                quote! { crate::FfiBuf::from_vec(#fn_name(#(#call_args),*)) }
+            };
+
+            if has_params {
+                quote! {
+                    #input
+
+                    #[unsafe(no_mangle)]
+                    #fn_vis unsafe extern "C" fn #export_ident(
+                        #(#ffi_params),*
+                    ) -> crate::FfiBuf<#inner_ty> {
+                        #body
+                    }
+                }
+            } else {
+                quote! {
+                    #input
+
+                    #[unsafe(no_mangle)]
+                    #fn_vis extern "C" fn #export_ident() -> crate::FfiBuf<#inner_ty> {
+                        #body
+                    }
+                }
+            }
+        }
+        ReturnKind::Option(abi) => {
+            let call = if has_conversions {
                 quote! {
                     #(#conversions)*
                     #fn_name(#(#call_args),*)
@@ -456,112 +523,93 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                 quote! { #fn_name(#(#call_args),*) }
             };
 
-            if has_params {
-                quote! {
-                    #input
+            match abi {
+                OptionReturnAbi::OutValue { inner } => {
+                    if has_params {
+                        quote! {
+                            #input
 
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #len_fn_name(
-                        #(#ffi_params),*
-                    ) -> usize {
-                        #body.len()
-                    }
-
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #copy_fn_name(
-                        #(#ffi_params),*,
-                        out: *mut #inner_ty,
-                        capacity: usize,
-                        written: *mut usize
-                    ) -> crate::FfiStatus {
-                        if out.is_null() || written.is_null() {
-                            return crate::FfiStatus::NULL_POINTER;
+                            #[unsafe(no_mangle)]
+                            #fn_vis extern "C" fn #export_ident(
+                                #(#ffi_params),*
+                            ) -> crate::FfiOption<#inner> {
+                                #call.into()
+                            }
                         }
-                        let result = #body;
-                        let to_copy = result.len().min(capacity);
-                        core::ptr::copy_nonoverlapping(result.as_ptr(), out, to_copy);
-                        *written = to_copy;
-                        crate::FfiStatus::OK
+                    } else {
+                        quote! {
+                            #input
+
+                            #[unsafe(no_mangle)]
+                            #fn_vis extern "C" fn #export_ident() -> crate::FfiOption<#inner> {
+                                #call.into()
+                            }
+                        }
                     }
                 }
-            } else {
-                quote! {
-                    #input
+                OptionReturnAbi::OutFfiString => {
+                    if has_params {
+                        quote! {
+                            #input
 
-                    #[unsafe(no_mangle)]
-                    #fn_vis extern "C" fn #len_fn_name() -> usize {
-                        #body.len()
-                    }
-
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #copy_fn_name(
-                        out: *mut #inner_ty,
-                        capacity: usize,
-                        written: *mut usize
-                    ) -> crate::FfiStatus {
-                        if out.is_null() || written.is_null() {
-                            return crate::FfiStatus::NULL_POINTER;
+                            #[unsafe(no_mangle)]
+                            #fn_vis extern "C" fn #export_ident(
+                                #(#ffi_params),*
+                            ) -> crate::FfiOption<crate::FfiString> {
+                                #call.map(crate::FfiString::from).into()
+                            }
                         }
-                        let result = #body;
-                        let to_copy = result.len().min(capacity);
-                        core::ptr::copy_nonoverlapping(result.as_ptr(), out, to_copy);
-                        *written = to_copy;
-                        crate::FfiStatus::OK
+                    } else {
+                        quote! {
+                            #input
+
+                            #[unsafe(no_mangle)]
+                            #fn_vis extern "C" fn #export_ident() -> crate::FfiOption<crate::FfiString> {
+                                #call.map(crate::FfiString::from).into()
+                            }
+                        }
                     }
                 }
-            }
-        }
-        ReturnKind::OptionPrimitive(inner_ty) => {
-            let body = if has_conversions {
-                quote! {
-                    #(#conversions)*
-                    match #fn_name(#(#call_args),*) {
-                        Some(v) => {
-                            *out = v;
-                            1
-                        }
-                        None => 0,
-                    }
-                }
-            } else {
-                quote! {
-                    match #fn_name(#(#call_args),*) {
-                        Some(v) => {
-                            *out = v;
-                            1
-                        }
-                        None => 0,
-                    }
-                }
-            };
+                OptionReturnAbi::Vec { inner } => {
+                    let is_string = is_string_type(&inner);
+                    let ffi_inner = if is_string {
+                        quote! { crate::FfiString }
+                    } else {
+                        quote! { #inner }
+                    };
 
-            if has_params {
-                quote! {
-                    #input
-
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #export_ident(
-                        #(#ffi_params),*,
-                        out: *mut #inner_ty
-                    ) -> i32 {
-                        if out.is_null() {
-                            return 0;
+                    let convert_body = if is_string {
+                        quote! {
+                            #call.map(|v| {
+                                crate::FfiBuf::from_vec(v.into_iter().map(crate::FfiString::from).collect())
+                            }).into()
                         }
-                        #body
-                    }
-                }
-            } else {
-                quote! {
-                    #input
-
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #export_ident(
-                        out: *mut #inner_ty
-                    ) -> i32 {
-                        if out.is_null() {
-                            return 0;
+                    } else {
+                        quote! {
+                            #call.map(crate::FfiBuf::from_vec).into()
                         }
-                        #body
+                    };
+
+                    if has_params {
+                        quote! {
+                            #input
+
+                            #[unsafe(no_mangle)]
+                            #fn_vis unsafe extern "C" fn #export_ident(
+                                #(#ffi_params),*
+                            ) -> crate::FfiOption<crate::FfiBuf<#ffi_inner>> {
+                                #convert_body
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #input
+
+                            #[unsafe(no_mangle)]
+                            #fn_vis extern "C" fn #export_ident() -> crate::FfiOption<crate::FfiBuf<#ffi_inner>> {
+                                #convert_body
+                            }
+                        }
                     }
                 }
             }

@@ -212,6 +212,7 @@ impl Kotlin {
 
         let supported_inputs = func.inputs.iter().all(|param| match &param.param_type {
             Type::Primitive(_) | Type::String | Type::Enum(_) => true,
+            Type::Record(name) => Self::is_record_blittable(name, module),
             Type::Vec(inner) | Type::Slice(inner) => match inner.as_ref() {
                 Type::Primitive(_) => true,
                 Type::Record(record_name) => Self::is_record_blittable(record_name, module),
@@ -227,12 +228,13 @@ impl Kotlin {
         match inner {
             Type::Primitive(_) | Type::String => true,
             Type::Record(name) => Self::is_record_blittable(name, module),
-            Type::Enum(name) => module
-                .enums
-                .iter()
-                .find(|e| &e.name == name)
-                .map(|e| e.is_data_enum())
-                .unwrap_or(false),
+            Type::Enum(name) => module.enums.iter().any(|e| &e.name == name),
+            Type::Vec(vec_inner) => match vec_inner.as_ref() {
+                Type::Primitive(_) | Type::String => true,
+                Type::Record(name) => Self::is_record_blittable(name, module),
+                Type::Enum(name) => module.enums.iter().any(|e| &e.name == name && !e.is_data_enum()),
+                _ => false,
+            },
             _ => false,
         }
     }

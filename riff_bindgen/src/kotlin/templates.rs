@@ -638,10 +638,7 @@ impl ClassTemplate {
                 format!("return {}", converted)
             }
             Some(_) => format!("return Native.{}({})", ffi_name, args),
-            None => format!(
-                "val status = Native.{}({})\n        checkStatus(status)",
-                ffi_name, args
-            ),
+            None => format!("Native.{}({})", ffi_name, args),
         }
     }
 }
