@@ -75,6 +75,87 @@ pub fn ffi_class_impl(item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+fn is_factory_constructor(method: &syn::ImplItemFn, type_name: &syn::Ident) -> bool {
+    if method.sig.ident == "new" {
+        return false;
+    }
+
+    let has_self = method
+        .sig
+        .inputs
+        .first()
+        .map(|arg| matches!(arg, FnArg::Receiver(_)))
+        .unwrap_or(false);
+
+    if has_self {
+        return false;
+    }
+
+    match &method.sig.output {
+        ReturnType::Default => false,
+        ReturnType::Type(_, ty) => {
+            if let Type::Path(type_path) = ty.as_ref() {
+                type_path
+                    .path
+                    .segments
+                    .last()
+                    .map(|s| s.ident == "Self" || s.ident == *type_name)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
+    }
+}
+
+fn generate_factory_constructor_export(
+    type_name: &syn::Ident,
+    class_name: &str,
+    method: &syn::ImplItemFn,
+) -> Option<proc_macro2::TokenStream> {
+    let method_name = &method.sig.ident;
+    let export_name = syn::Ident::new(
+        &naming::method_ffi_name(class_name, &method_name.to_string()),
+        method_name.span(),
+    );
+
+    let inputs = method.sig.inputs.iter().cloned();
+    let FfiParams {
+        ffi_params,
+        conversions,
+        call_args,
+    } = transform_method_params(inputs);
+
+    let call_expr = quote! { #type_name::#method_name(#(#call_args),*) };
+
+    let body = if conversions.is_empty() {
+        quote! { Box::into_raw(Box::new(#call_expr)) }
+    } else {
+        quote! {
+            #(#conversions)*
+            Box::into_raw(Box::new(#call_expr))
+        }
+    };
+
+    if ffi_params.is_empty() {
+        Some(quote! {
+            #[unsafe(no_mangle)]
+            pub extern "C" fn #export_name() -> *mut #type_name {
+                #body
+            }
+        })
+    } else {
+        Some(quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                #(#ffi_params),*
+            ) -> *mut #type_name {
+                #body
+            }
+        })
+    }
+}
+
 fn generate_method_export(
     type_name: &syn::Ident,
     class_name: &str,
@@ -94,6 +175,9 @@ fn generate_method_export(
         .unwrap_or(false);
 
     if !has_self {
+        if is_factory_constructor(method, type_name) {
+            return generate_factory_constructor_export(type_name, class_name, method);
+        }
         return None;
     }
 

@@ -7,9 +7,9 @@ use syn::{
 use walkdir::WalkDir;
 
 use crate::model::{
-    CallbackTrait, Class, Constructor, Enumeration, Function, Method, Module, Parameter, Primitive,
-    Receiver, Record, RecordField, ReturnType, StreamMethod, StreamMode, TraitMethod,
-    TraitMethodParam, Type as MType, Variant,
+    CallbackTrait, Class, ClosureSignature as MClosureSignature, Constructor, ConstructorParam,
+    Enumeration, Function, Method, Module, Parameter, Primitive, Receiver, Record, RecordField,
+    ReturnType, StreamMethod, StreamMode, TraitMethod, TraitMethodParam, Type as MType, Variant,
 };
 
 #[derive(Default)]
@@ -54,7 +54,12 @@ struct ScannedClass {
     name: String,
     methods: Vec<ScannedMethod>,
     streams: Vec<ScannedStream>,
-    has_constructor: bool,
+    constructors: Vec<ScannedConstructor>,
+}
+
+struct ScannedConstructor {
+    name: String,
+    params: Vec<(String, MType)>,
 }
 
 struct ScannedMethod {
@@ -416,16 +421,18 @@ impl SourceScanner {
         };
 
         let mut class = ScannedClass {
-            name,
+            name: name.clone(),
             methods: Vec::new(),
             streams: Vec::new(),
-            has_constructor: false,
+            constructors: Vec::new(),
         };
 
         for item in &item_impl.items {
             if let ImplItem::Fn(method) = item {
-                if method.sig.ident == "new" {
-                    class.has_constructor = true;
+                if self.is_constructor(method, &name) {
+                    if let Some(ctor) = self.process_constructor(method) {
+                        class.constructors.push(ctor);
+                    }
                     continue;
                 }
 
@@ -520,6 +527,51 @@ impl SourceScanner {
         })
     }
 
+    fn is_constructor(&self, method: &syn::ImplItemFn, class_name: &str) -> bool {
+        let has_self_receiver = method.sig.inputs.iter().any(|arg| {
+            matches!(arg, syn::FnArg::Receiver(_))
+        });
+        if has_self_receiver {
+            return false;
+        }
+
+        match &method.sig.output {
+            syn::ReturnType::Default => false,
+            syn::ReturnType::Type(_, ty) => {
+                if let syn::Type::Path(type_path) = ty.as_ref() {
+                    let last_segment = type_path.path.segments.last();
+                    last_segment.map(|s| s.ident == "Self" || s.ident == class_name).unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    fn process_constructor(&self, method: &syn::ImplItemFn) -> Option<ScannedConstructor> {
+        let name = method.sig.ident.to_string();
+
+        let params: Vec<(String, MType)> = method
+            .sig
+            .inputs
+            .iter()
+            .filter_map(|arg| {
+                if let syn::FnArg::Typed(pat_type) = arg {
+                    let param_name = match pat_type.pat.as_ref() {
+                        syn::Pat::Ident(ident) => ident.ident.to_string(),
+                        _ => return None,
+                    };
+                    let param_type = rust_type_to_ffi_type(&pat_type.ty, &self.type_registry)?;
+                    Some((param_name, param_type))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Some(ScannedConstructor { name, params })
+    }
+
     pub fn into_module(self) -> Module {
         let mut module = Module::new(&self.module_name);
 
@@ -570,8 +622,12 @@ impl SourceScanner {
         for class in self.classes {
             let mut c = Class::new(&class.name);
 
-            if class.has_constructor {
-                c = c.with_constructor(Constructor::new());
+            for ctor in class.constructors {
+                let mut constructor = Constructor::new().with_name(&ctor.name);
+                for (name, ty) in ctor.params {
+                    constructor = constructor.with_param(ConstructorParam::new(&name, ty));
+                }
+                c = c.with_constructor(constructor);
             }
 
             for method in class.methods {
@@ -845,11 +901,20 @@ fn rust_type_to_ffi_type(ty: &Type, registry: &TypeRegistry) -> Option<MType> {
                         && let syn::PathArguments::Parenthesized(args) =
                             &trait_bound.path.segments.last()?.arguments
                     {
-                        let param_type = args
+                        let params: Vec<MType> = args
                             .inputs
-                            .first()
-                            .and_then(|t| rust_type_to_ffi_type(t, registry));
-                        return Some(MType::Callback(Box::new(param_type.unwrap_or(MType::Void))));
+                            .iter()
+                            .filter_map(|t| rust_type_to_ffi_type(t, registry))
+                            .collect();
+
+                        let returns = match &args.output {
+                            syn::ReturnType::Default => MType::Void,
+                            syn::ReturnType::Type(_, ty) => {
+                                rust_type_to_ffi_type(ty, registry).unwrap_or(MType::Void)
+                            }
+                        };
+
+                        return Some(MType::Closure(MClosureSignature::new(params, returns)));
                     }
                 }
             }

@@ -5,8 +5,8 @@ use heck::ToShoutySnakeCase;
 use riff_ffi_rules::naming;
 
 use crate::model::{
-    CallbackTrait, Class, DataEnumLayout, Enumeration, Function, Method, Module, Primitive, Record,
-    ReturnType, TraitMethod, TraitMethodParam, Type,
+    CallbackTrait, Class, ClosureSignature, DataEnumLayout, Enumeration, Function, Method, Module,
+    Primitive, Record, ReturnType, TraitMethod, TraitMethodParam, Type,
 };
 
 use super::layout::{KotlinBufferRead, KotlinBufferWrite};
@@ -63,6 +63,59 @@ impl PreambleTemplate {
             ]
         } else {
             Vec::new()
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "kotlin/closure_interface.txt", escape = "none")]
+pub struct ClosureInterfaceTemplate {
+    pub interface_name: String,
+    pub params: Vec<ClosureParamView>,
+    pub is_void_return: bool,
+    pub return_type: String,
+}
+
+pub struct ClosureParamView {
+    pub name: String,
+    pub kotlin_type: String,
+}
+
+impl ClosureInterfaceTemplate {
+    pub fn from_signature(sig: &ClosureSignature, _prefix: &str) -> Self {
+        let interface_name = format!("{}Callback", sig.signature_id());
+        let params: Vec<ClosureParamView> = sig
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| ClosureParamView {
+                name: format!("p{}", i),
+                kotlin_type: Self::closure_param_type(ty),
+            })
+            .collect();
+        let is_void_return = sig.returns.is_void();
+        let return_type = if is_void_return {
+            "Unit".to_string()
+        } else {
+            TypeMapper::map_type(&sig.returns)
+        };
+
+        Self {
+            interface_name,
+            params,
+            is_void_return,
+            return_type,
+        }
+    }
+
+    pub fn interface_name_for_signature(sig: &ClosureSignature) -> String {
+        format!("{}Callback", sig.signature_id())
+    }
+
+    fn closure_param_type(ty: &Type) -> String {
+        match ty {
+            Type::Record(_) => "java.nio.ByteBuffer".to_string(),
+            _ => TypeMapper::map_type(ty),
         }
     }
 }
@@ -676,8 +729,10 @@ pub struct ClassTemplate {
 }
 
 pub struct ConstructorView {
+    pub name: String,
     pub ffi_name: String,
     pub params: Vec<ParamView>,
+    pub is_factory: bool,
 }
 
 pub struct MethodView {
@@ -707,20 +762,30 @@ impl ClassTemplate {
                     .iter()
                     .all(|param| matches!(&param.param_type, Type::Primitive(_)))
             })
-            .map(|ctor| ConstructorView {
-                ffi_name: format!("{}_new", ffi_prefix),
-                params: ctor
-                    .inputs
-                    .iter()
-                    .map(|param| ParamView {
-                        name: NamingConvention::param_name(&param.name),
-                        kotlin_type: TypeMapper::map_type(&param.param_type),
-                        conversion: ParamConversion::to_ffi(
-                            &NamingConvention::param_name(&param.name),
-                            &param.param_type,
-                        ),
-                    })
-                    .collect(),
+            .map(|ctor| {
+                let is_factory = !ctor.is_default();
+                let ffi_name = if is_factory {
+                    naming::method_ffi_name(&class.name, &ctor.name)
+                } else {
+                    format!("{}_new", ffi_prefix)
+                };
+                ConstructorView {
+                    name: NamingConvention::method_name(&ctor.name),
+                    ffi_name,
+                    is_factory,
+                    params: ctor
+                        .inputs
+                        .iter()
+                        .map(|param| ParamView {
+                            name: NamingConvention::param_name(&param.name),
+                            kotlin_type: TypeMapper::map_type(&param.param_type),
+                            conversion: ParamConversion::to_ffi(
+                                &NamingConvention::param_name(&param.name),
+                                &param.param_type,
+                            ),
+                        })
+                        .collect(),
+                }
             })
             .collect();
 
@@ -789,7 +854,7 @@ impl ClassTemplate {
         let supported_inputs = method
             .inputs
             .iter()
-            .all(|param| matches!(&param.param_type, Type::Primitive(_)));
+            .all(|param| matches!(&param.param_type, Type::Primitive(_) | Type::Closure(_)));
 
         supported_output && supported_inputs
     }
@@ -856,7 +921,13 @@ pub struct NativeClassView {
     pub ffi_new: String,
     pub ffi_free: String,
     pub ctor_params: Vec<NativeParamView>,
+    pub factory_ctors: Vec<NativeFactoryCtorView>,
     pub methods: Vec<NativeMethodView>,
+}
+
+pub struct NativeFactoryCtorView {
+    pub ffi_name: String,
+    pub params: Vec<NativeParamView>,
 }
 
 pub struct NativeMethodView {
@@ -932,7 +1003,8 @@ impl NativeTemplate {
 
                 let ctor_params: Vec<NativeParamView> = class
                     .constructors
-                    .first()
+                    .iter()
+                    .find(|c| c.is_default())
                     .map(|ctor| {
                         ctor.inputs
                             .iter()
@@ -944,6 +1016,24 @@ impl NativeTemplate {
                             .collect()
                     })
                     .unwrap_or_default();
+
+                let factory_ctors: Vec<NativeFactoryCtorView> = class
+                    .constructors
+                    .iter()
+                    .filter(|c| !c.is_default())
+                    .filter(|c| c.inputs.iter().all(|p| matches!(&p.param_type, Type::Primitive(_))))
+                    .map(|ctor| NativeFactoryCtorView {
+                        ffi_name: naming::method_ffi_name(&class.name, &ctor.name),
+                        params: ctor
+                            .inputs
+                            .iter()
+                            .map(|p| NativeParamView {
+                                name: NamingConvention::param_name(&p.name),
+                                jni_type: TypeMapper::jni_type(&p.param_type),
+                            })
+                            .collect(),
+                    })
+                    .collect();
 
                 let methods: Vec<NativeMethodView> = class
                     .methods
@@ -963,7 +1053,7 @@ impl NativeTemplate {
                         let supported_inputs = method
                             .inputs
                             .iter()
-                            .all(|param| matches!(&param.param_type, Type::Primitive(_)));
+                            .all(|param| matches!(&param.param_type, Type::Primitive(_) | Type::Closure(_)));
 
                         supported_output && supported_inputs
                     })
@@ -998,6 +1088,7 @@ impl NativeTemplate {
                     ffi_new: format!("{}_new", ffi_prefix),
                     ffi_free: format!("{}_free", ffi_prefix),
                     ctor_params,
+                    factory_ctors,
                     methods,
                 }
             })
@@ -1127,6 +1218,7 @@ impl NativeTemplate {
             _ => base_type.to_string(),
         }
     }
+
 }
 
 #[derive(Template)]

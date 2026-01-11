@@ -20,6 +20,9 @@ private object Native {
 {%- for class in classes %}
     @JvmStatic external fun {{ class.ffi_new }}({% for param in class.ctor_params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Long
     @JvmStatic external fun {{ class.ffi_free }}(handle: Long)
+{%- for ctor in class.factory_ctors %}
+    @JvmStatic external fun {{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Long
+{%- endfor %}
 {%- for method in class.methods %}
 {%- if method.is_async %}
     @JvmStatic external fun {{ method.ffi_name }}(handle: Long{% if !method.params.is_empty() %}, {% endif %}{% for param in method.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Long

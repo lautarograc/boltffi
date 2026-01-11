@@ -14,11 +14,25 @@ public final class {{ class_name }} {
 {%- if let Some(doc) = ctor.doc %}
     /// {{ doc }}
 {%- endif %}
+{%- if ctor.is_factory && ctor.params.is_empty() %}
+
+    public static func {{ ctor.name }}() -> Self {
+        let ptr = {{ ctor.ffi_name }}()!
+        return Self(handle: ptr)
+    }
+{%- else if ctor.is_factory %}
+
+    public convenience init({{ ctor.name }} {{ ctor.first_param_name }}: {{ ctor.first_param_type }}{% for param in ctor.rest_params %}, {{ param.swift_name }}: {{ param.swift_type }}{% endfor %}) {
+        let ptr = {{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %})!
+        self.init(handle: ptr)
+    }
+{%- else %}
 
     public convenience init({% for param in ctor.params %}{{ param.swift_name }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}) {
         let ptr = {{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %})!
         self.init(handle: ptr)
     }
+{%- endif %}
 {%- endfor %}
 
     deinit {

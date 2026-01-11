@@ -7,6 +7,7 @@ use crate::model::{
 };
 
 use super::body::BodyRenderer;
+use super::conversion::ParamInfo;
 use super::names::NamingConvention;
 use super::types::TypeMapper;
 
@@ -96,7 +97,7 @@ pub struct FunctionTemplate {
     pub func_name: String,
     pub ffi_name: String,
     pub ffi_module_name: Option<String>,
-    pub params: Vec<super::conversion::ParamInfo>,
+    pub params: Vec<ParamInfo>,
     pub return_type: Option<String>,
     pub return_kind: super::marshal::ReturnKind,
     pub structured_error: Option<StructuredError>,
@@ -362,10 +363,22 @@ impl ClassTemplate {
                         ctor.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
                         &NamingConvention::class_name(&class.name),
                     );
+                    let is_factory = !ctor.is_default();
+                    let first_param = params_info.params.first();
+                    let rest_params: Vec<_> = params_info.params.iter().skip(1).cloned().collect();
                     ConstructorView {
                         doc: ctor.doc.clone(),
-                        ffi_name: naming::class_ffi_new(&class.name),
+                        name: NamingConvention::method_name(&ctor.name),
+                        ffi_name: if is_factory {
+                            naming::method_ffi_name(&class.name, &ctor.name)
+                        } else {
+                            naming::class_ffi_new(&class.name)
+                        },
                         is_failable: false,
+                        is_factory,
+                        first_param_name: first_param.map(|p| p.swift_name.clone()).unwrap_or_default(),
+                        first_param_type: first_param.map(|p| p.swift_type.clone()).unwrap_or_default(),
+                        rest_params,
                         params: params_info.params,
                     }
                 })
@@ -444,9 +457,14 @@ pub struct DataVariantView {
 
 pub struct ConstructorView {
     pub doc: Option<String>,
+    pub name: String,
     pub ffi_name: String,
     pub is_failable: bool,
-    pub params: Vec<super::conversion::ParamInfo>,
+    pub is_factory: bool,
+    pub params: Vec<ParamInfo>,
+    pub first_param_name: String,
+    pub first_param_type: String,
+    pub rest_params: Vec<ParamInfo>,
 }
 
 pub struct MethodView {
@@ -458,7 +476,7 @@ pub struct MethodView {
     pub is_async: bool,
     pub throws: bool,
     pub return_type: Option<String>,
-    pub params: Vec<super::conversion::ParamInfo>,
+    pub params: Vec<ParamInfo>,
     pub body: String,
 }
 

@@ -592,7 +592,7 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
             },
             ReturnType::Void => {
                 let params_str = Self::format_params(params);
-                format!("void {}({});\n", ffi_name, params_str)
+                format!("FfiStatus {}({});\n", ffi_name, params_str)
             }
         }
     }
@@ -738,10 +738,29 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
         let snake_name = naming::to_snake_case(&class.name);
         let class_prefix = format!("{}_{}", prefix, snake_name);
 
-        out.push_str(&format!(
-            "struct {} * {}_new(void);\n",
-            class.name, class_prefix
-        ));
+        for ctor in &class.constructors {
+            let ffi_name = if ctor.is_default() {
+                format!("{}_new", class_prefix)
+            } else {
+                naming::method_ffi_name(&class.name, &ctor.name)
+            };
+            if ctor.inputs.is_empty() {
+                out.push_str(&format!("struct {} * {}(void);\n", class.name, ffi_name));
+            } else {
+                let params: Vec<String> = ctor
+                    .inputs
+                    .iter()
+                    .flat_map(|p| Self::param_to_c(&p.name, &p.param_type))
+                    .map(|(n, t)| format!("{} {}", t, n))
+                    .collect();
+                out.push_str(&format!(
+                    "struct {} * {}({});\n",
+                    class.name,
+                    ffi_name,
+                    params.join(", ")
+                ));
+            }
+        }
         out.push_str(&format!(
             "FfiStatus {}_free(struct {} * handle);\n",
             class_prefix, class.name
@@ -828,12 +847,22 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
                 ),
                 (format!("{}_len", name), "uintptr_t".to_string()),
             ],
-            Type::Callback(inner) => {
-                let inner_c_type = Self::type_to_c(inner);
-                let callback_type = if inner.is_void() {
-                    "void (*)(void*)".to_string()
+            Type::Closure(sig) => {
+                let params_c = sig
+                    .params
+                    .iter()
+                    .map(|p| Self::type_to_c(p))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret_c = if sig.returns.is_void() {
+                    "void".to_string()
                 } else {
-                    format!("void (*)(void*, {})", inner_c_type)
+                    Self::type_to_c(&sig.returns)
+                };
+                let callback_type = if params_c.is_empty() {
+                    format!("{} (*)(void*)", ret_c)
+                } else {
+                    format!("{} (*)(void*, {})", ret_c, params_c)
                 };
                 vec![
                     (format!("{}_cb", name), callback_type),
@@ -920,7 +949,7 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
             Type::Option(inner) => Self::type_to_c(inner),
             Type::Slice(inner) => format!("const {}*", Self::type_to_c(inner)),
             Type::MutSlice(inner) => format!("{}*", Self::type_to_c(inner)),
-            Type::Callback(_) => "void*".to_string(),
+            Type::Closure(_) => "void*".to_string(),
             Type::Void => "void".to_string(),
             Type::Result { ok, .. } => Self::type_to_c(ok),
         }

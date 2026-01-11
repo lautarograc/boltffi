@@ -66,6 +66,7 @@ impl Class {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Constructor {
+    pub name: String,
     pub inputs: Vec<ConstructorParam>,
     pub doc: Option<String>,
 }
@@ -73,9 +74,15 @@ pub struct Constructor {
 impl Constructor {
     pub fn new() -> Self {
         Self {
+            name: "new".to_string(),
             inputs: Vec::new(),
             doc: None,
         }
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
     }
 
     pub fn with_param(mut self, param: ConstructorParam) -> Self {
@@ -86,6 +93,10 @@ impl Constructor {
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
         self.doc = Some(doc.into());
         self
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.name == "new"
     }
 }
 
