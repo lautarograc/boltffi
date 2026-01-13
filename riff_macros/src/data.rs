@@ -32,7 +32,13 @@ pub fn data_impl(item: TokenStream) -> TokenStream {
                 item_enum.attrs.insert(0, syn::parse_quote!(#[repr(i32)]));
             }
         }
-        return TokenStream::from(quote!(#item_enum));
+        
+        let wire_impls = wire_gen::generate_enum_wire_impls(&item_enum);
+        
+        return TokenStream::from(quote! {
+            #item_enum
+            #wire_impls
+        });
     }
 
     syn::Error::new_spanned(

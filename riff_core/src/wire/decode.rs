@@ -22,10 +22,10 @@ macro_rules! impl_wire_decode_primitive {
                 #[inline]
                 fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
                     const SIZE: usize = core::mem::size_of::<$ty>();
-                    if buf.len() < SIZE {
-                        return Err(DecodeError::BufferTooSmall);
-                    }
-                    let bytes: [u8; SIZE] = buf[..SIZE].try_into().unwrap();
+                    let bytes: [u8; SIZE] = buf.get(..SIZE)
+                        .ok_or(DecodeError::BufferTooSmall)?
+                        .try_into()
+                        .map_err(|_| DecodeError::BufferTooSmall)?;
                     Ok((<$ty>::from_le_bytes(bytes), SIZE))
                 }
             }
@@ -52,10 +52,10 @@ impl WireDecode for bool {
 impl WireDecode for isize {
     #[inline]
     fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
-        if buf.len() < 8 {
-            return Err(DecodeError::BufferTooSmall);
-        }
-        let bytes: [u8; 8] = buf[..8].try_into().unwrap();
+        let bytes: [u8; 8] = buf.get(..8)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
         let value = i64::from_le_bytes(bytes) as isize;
         Ok((value, 8))
     }
@@ -64,10 +64,10 @@ impl WireDecode for isize {
 impl WireDecode for usize {
     #[inline]
     fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
-        if buf.len() < 8 {
-            return Err(DecodeError::BufferTooSmall);
-        }
-        let bytes: [u8; 8] = buf[..8].try_into().unwrap();
+        let bytes: [u8; 8] = buf.get(..8)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
         let value = u64::from_le_bytes(bytes) as usize;
         Ok((value, 8))
     }
@@ -75,11 +75,10 @@ impl WireDecode for usize {
 
 impl WireDecode for String {
     fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
-        if buf.len() < STRING_LEN_SIZE {
-            return Err(DecodeError::BufferTooSmall);
-        }
-
-        let len_bytes: [u8; 4] = buf[..STRING_LEN_SIZE].try_into().unwrap();
+        let len_bytes: [u8; 4] = buf.get(..STRING_LEN_SIZE)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
         let len = u32::from_le_bytes(len_bytes) as usize;
 
         let total_size = STRING_LEN_SIZE + len;
@@ -125,10 +124,10 @@ macro_rules! impl_fixed_size_decode {
 
                 #[inline]
                 fn decode_fixed(buf: &[u8]) -> Result<Self, DecodeError> {
-                    if buf.len() < Self::WIRE_SIZE {
-                        return Err(DecodeError::BufferTooSmall);
-                    }
-                    let bytes: [u8; Self::WIRE_SIZE] = buf[..Self::WIRE_SIZE].try_into().unwrap();
+                    let bytes: [u8; Self::WIRE_SIZE] = buf.get(..Self::WIRE_SIZE)
+                        .ok_or(DecodeError::BufferTooSmall)?
+                        .try_into()
+                        .map_err(|_| DecodeError::BufferTooSmall)?;
                     Ok(<$ty>::from_le_bytes(bytes))
                 }
             }
@@ -159,10 +158,10 @@ impl FixedSizeWireDecode for isize {
 
     #[inline]
     fn decode_fixed(buf: &[u8]) -> Result<Self, DecodeError> {
-        if buf.len() < 8 {
-            return Err(DecodeError::BufferTooSmall);
-        }
-        let bytes: [u8; 8] = buf[..8].try_into().unwrap();
+        let bytes: [u8; 8] = buf.get(..8)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
         Ok(i64::from_le_bytes(bytes) as isize)
     }
 }
@@ -172,21 +171,20 @@ impl FixedSizeWireDecode for usize {
 
     #[inline]
     fn decode_fixed(buf: &[u8]) -> Result<Self, DecodeError> {
-        if buf.len() < 8 {
-            return Err(DecodeError::BufferTooSmall);
-        }
-        let bytes: [u8; 8] = buf[..8].try_into().unwrap();
+        let bytes: [u8; 8] = buf.get(..8)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
         Ok(u64::from_le_bytes(bytes) as usize)
     }
 }
 
 impl<T: WireDecode + crate::wire::encode::WireSize> WireDecode for Vec<T> {
     fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
-        if buf.len() < VEC_COUNT_SIZE {
-            return Err(DecodeError::BufferTooSmall);
-        }
-
-        let count_bytes: [u8; 4] = buf[..VEC_COUNT_SIZE].try_into().unwrap();
+        let count_bytes: [u8; 4] = buf.get(..VEC_COUNT_SIZE)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
         let count = u32::from_le_bytes(count_bytes) as usize;
 
         if count == 0 {
@@ -195,8 +193,7 @@ impl<T: WireDecode + crate::wire::encode::WireSize> WireDecode for Vec<T> {
 
         let mut result = Vec::with_capacity(count);
 
-        if T::is_fixed_size() {
-            let element_size = T::fixed_size().unwrap();
+        if let Some(element_size) = T::fixed_size() {
             let mut offset = VEC_COUNT_SIZE;
 
             for _ in 0..count {
@@ -220,7 +217,10 @@ impl<T: WireDecode + crate::wire::encode::WireSize> WireDecode for Vec<T> {
 
             for i in 0..count {
                 let offset_pos = offsets_start + (i * OFFSET_SIZE);
-                let offset_bytes: [u8; 4] = buf[offset_pos..offset_pos + OFFSET_SIZE].try_into().unwrap();
+                let offset_bytes: [u8; 4] = buf.get(offset_pos..offset_pos + OFFSET_SIZE)
+                    .ok_or(DecodeError::BufferTooSmall)?
+                    .try_into()
+                    .map_err(|_| DecodeError::BufferTooSmall)?;
                 let relative_offset = u32::from_le_bytes(offset_bytes) as usize;
                 let element_offset = offsets_start + relative_offset;
 

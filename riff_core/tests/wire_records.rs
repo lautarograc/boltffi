@@ -1025,3 +1025,258 @@ mod wire_size {
         assert_eq!(written, opt.wire_size());
     }
 }
+
+mod enums {
+    use super::*;
+
+    #[test]
+    fn unit_enum_roundtrip() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        
+        assert!(Color::is_fixed_size());
+        assert_eq!(Color::fixed_size(), Some(4));
+        
+        for (variant, expected_discriminant) in [
+            (Color::Red, 0i32),
+            (Color::Green, 1i32),
+            (Color::Blue, 2i32),
+        ] {
+            assert_eq!(variant.wire_size(), 4);
+            
+            let mut buf = [0u8; 4];
+            let written = variant.encode_to(&mut buf);
+            assert_eq!(written, 4);
+            assert_eq!(i32::from_le_bytes(buf), expected_discriminant);
+            
+            let (decoded, consumed) = Color::decode_from(&buf).unwrap();
+            assert_eq!(consumed, 4);
+            assert_eq!(decoded, variant);
+        }
+    }
+
+    #[test]
+    fn tuple_enum_roundtrip() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Value {
+            Int(i32),
+            Float(f64),
+            Text(String),
+        }
+        
+        assert!(!Value::is_fixed_size());
+        
+        let int_val = Value::Int(42);
+        assert_eq!(int_val.wire_size(), 4 + 4);
+        let mut buf = vec![0u8; int_val.wire_size()];
+        int_val.encode_to(&mut buf);
+        let (decoded, _) = Value::decode_from(&buf).unwrap();
+        assert_eq!(decoded, int_val);
+        
+        let float_val = Value::Float(3.14);
+        assert_eq!(float_val.wire_size(), 4 + 8);
+        let mut buf = vec![0u8; float_val.wire_size()];
+        float_val.encode_to(&mut buf);
+        let (decoded, _) = Value::decode_from(&buf).unwrap();
+        assert_eq!(decoded, float_val);
+        
+        let text_val = Value::Text("hello".to_string());
+        assert_eq!(text_val.wire_size(), 4 + 4 + 5);
+        let mut buf = vec![0u8; text_val.wire_size()];
+        text_val.encode_to(&mut buf);
+        let (decoded, _) = Value::decode_from(&buf).unwrap();
+        assert_eq!(decoded, text_val);
+    }
+
+    #[test]
+    fn struct_variant_enum_roundtrip() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Shape {
+            Circle { radius: f64 },
+            Rectangle { width: f64, height: f64 },
+        }
+        
+        assert!(!Shape::is_fixed_size());
+        
+        let circle = Shape::Circle { radius: 5.0 };
+        assert_eq!(circle.wire_size(), 4 + 8);
+        let mut buf = vec![0u8; circle.wire_size()];
+        circle.encode_to(&mut buf);
+        let (decoded, _) = Shape::decode_from(&buf).unwrap();
+        assert_eq!(decoded, circle);
+        
+        let rect = Shape::Rectangle { width: 10.0, height: 20.0 };
+        assert_eq!(rect.wire_size(), 4 + 8 + 8);
+        let mut buf = vec![0u8; rect.wire_size()];
+        rect.encode_to(&mut buf);
+        let (decoded, _) = Shape::decode_from(&buf).unwrap();
+        assert_eq!(decoded, rect);
+    }
+
+    #[test]
+    fn mixed_enum_roundtrip() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Event {
+            None,
+            Click(i32, i32),
+            Message { text: String },
+        }
+        
+        let none = Event::None;
+        let mut buf = vec![0u8; none.wire_size()];
+        none.encode_to(&mut buf);
+        let (decoded, _) = Event::decode_from(&buf).unwrap();
+        assert_eq!(decoded, none);
+        
+        let click = Event::Click(100, 200);
+        let mut buf = vec![0u8; click.wire_size()];
+        click.encode_to(&mut buf);
+        let (decoded, _) = Event::decode_from(&buf).unwrap();
+        assert_eq!(decoded, click);
+        
+        let msg = Event::Message { text: "hello".to_string() };
+        let mut buf = vec![0u8; msg.wire_size()];
+        msg.encode_to(&mut buf);
+        let (decoded, _) = Event::decode_from(&buf).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn enum_with_vec_field() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Container {
+            Empty,
+            Items(Vec<i32>),
+        }
+        
+        let empty = Container::Empty;
+        let mut buf = vec![0u8; empty.wire_size()];
+        empty.encode_to(&mut buf);
+        let (decoded, _) = Container::decode_from(&buf).unwrap();
+        assert_eq!(decoded, empty);
+        
+        let items = Container::Items(vec![1, 2, 3, 4, 5]);
+        let mut buf = vec![0u8; items.wire_size()];
+        items.encode_to(&mut buf);
+        let (decoded, _) = Container::decode_from(&buf).unwrap();
+        assert_eq!(decoded, items);
+    }
+
+    #[test]
+    fn enum_with_option_field() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum MaybeData {
+            Nothing,
+            Something(Option<i32>),
+        }
+        
+        let nothing = MaybeData::Nothing;
+        let mut buf = vec![0u8; nothing.wire_size()];
+        nothing.encode_to(&mut buf);
+        let (decoded, _) = MaybeData::decode_from(&buf).unwrap();
+        assert_eq!(decoded, nothing);
+        
+        let some = MaybeData::Something(Some(42));
+        let mut buf = vec![0u8; some.wire_size()];
+        some.encode_to(&mut buf);
+        let (decoded, _) = MaybeData::decode_from(&buf).unwrap();
+        assert_eq!(decoded, some);
+        
+        let none = MaybeData::Something(None);
+        let mut buf = vec![0u8; none.wire_size()];
+        none.encode_to(&mut buf);
+        let (decoded, _) = MaybeData::decode_from(&buf).unwrap();
+        assert_eq!(decoded, none);
+    }
+
+    #[test]
+    fn nested_enum_in_struct() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Status {
+            Active,
+            Inactive,
+        }
+        
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        struct User {
+            id: i32,
+            status: Status,
+        }
+        
+        let user = User { id: 1, status: Status::Active };
+        let mut buf = vec![0u8; user.wire_size()];
+        user.encode_to(&mut buf);
+        let (decoded, _) = User::decode_from(&buf).unwrap();
+        assert_eq!(decoded, user);
+        
+        let user2 = User { id: 2, status: Status::Inactive };
+        let mut buf = vec![0u8; user2.wire_size()];
+        user2.encode_to(&mut buf);
+        let (decoded, _) = User::decode_from(&buf).unwrap();
+        assert_eq!(decoded, user2);
+    }
+
+    #[test]
+    fn enum_invalid_discriminant() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Binary {
+            Zero,
+            One,
+        }
+        
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&99i32.to_le_bytes());
+        
+        let result = Binary::decode_from(&buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn enum_buffer_too_small() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Test {
+            A,
+        }
+        
+        let buf = [0u8; 3];
+        let result = Test::decode_from(&buf);
+        assert!(matches!(result, Err(DecodeError::BufferTooSmall)));
+    }
+
+    #[test]
+    fn many_variants_enum() {
+        #[data]
+        #[derive(Debug, Clone, PartialEq)]
+        enum Many {
+            V0, V1, V2, V3, V4, V5, V6, V7, V8, V9,
+        }
+        
+        assert!(Many::is_fixed_size());
+        
+        for (i, variant) in [
+            Many::V0, Many::V1, Many::V2, Many::V3, Many::V4,
+            Many::V5, Many::V6, Many::V7, Many::V8, Many::V9,
+        ].iter().enumerate() {
+            let mut buf = [0u8; 4];
+            variant.encode_to(&mut buf);
+            assert_eq!(i32::from_le_bytes(buf), i as i32);
+            
+            let (decoded, _) = Many::decode_from(&buf).unwrap();
+            assert_eq!(&decoded, variant);
+        }
+    }
+}

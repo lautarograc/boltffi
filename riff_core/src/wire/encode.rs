@@ -177,8 +177,7 @@ impl<T: WireSize> WireSize for Vec<T> {
 
     #[inline]
     fn wire_size(&self) -> usize {
-        if T::is_fixed_size() {
-            let element_size = T::fixed_size().unwrap();
+        if let Some(element_size) = T::fixed_size() {
             VEC_COUNT_SIZE + (self.len() * element_size)
         } else {
             let offsets_size = self.len() * OFFSET_SIZE;
@@ -193,8 +192,7 @@ impl<T: WireEncode> WireEncode for Vec<T> {
         let count = self.len() as u32;
         buf[..VEC_COUNT_SIZE].copy_from_slice(&count.to_le_bytes());
 
-        if T::is_fixed_size() {
-            let element_size = T::fixed_size().unwrap();
+        if let Some(element_size) = T::fixed_size() {
             let mut offset = VEC_COUNT_SIZE;
             for element in self {
                 element.encode_to(&mut buf[offset..]);
@@ -223,8 +221,7 @@ impl<T: WireEncode> WireEncode for Vec<T> {
 impl<T: WireSize> WireSize for [T] {
     #[inline]
     fn wire_size(&self) -> usize {
-        if T::is_fixed_size() {
-            let element_size = T::fixed_size().unwrap();
+        if let Some(element_size) = T::fixed_size() {
             VEC_COUNT_SIZE + (self.len() * element_size)
         } else {
             let offsets_size = self.len() * OFFSET_SIZE;
@@ -239,8 +236,7 @@ impl<T: WireEncode> WireEncode for [T] {
         let count = self.len() as u32;
         buf[..VEC_COUNT_SIZE].copy_from_slice(&count.to_le_bytes());
 
-        if T::is_fixed_size() {
-            let element_size = T::fixed_size().unwrap();
+        if let Some(element_size) = T::fixed_size() {
             let mut offset = VEC_COUNT_SIZE;
             for element in self {
                 element.encode_to(&mut buf[offset..]);

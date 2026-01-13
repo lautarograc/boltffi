@@ -24,16 +24,16 @@ impl WireBuffer {
     }
 
     pub fn from_bytes(data: Vec<u8>) -> Result<Self, DecodeError> {
-        if data.len() < HEADER_SIZE {
-            return Err(DecodeError::BufferTooSmall);
-        }
-
-        let magic = u32::from_le_bytes(data[0..4].try_into().unwrap());
+        let magic_bytes: [u8; 4] = data.get(0..4)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
+        let magic = u32::from_le_bytes(magic_bytes);
         if magic != MAGIC {
             return Err(DecodeError::InvalidMagic);
         }
 
-        let version = data[4];
+        let version = *data.get(4).ok_or(DecodeError::BufferTooSmall)?;
         if version != VERSION {
             return Err(DecodeError::UnsupportedVersion);
         }
@@ -42,21 +42,25 @@ impl WireBuffer {
     }
 
     pub fn validate(&self) -> Result<(), DecodeError> {
-        if self.data.len() < HEADER_SIZE {
-            return Err(DecodeError::BufferTooSmall);
-        }
-
-        let magic = u32::from_le_bytes(self.data[0..4].try_into().unwrap());
+        let magic_bytes: [u8; 4] = self.data.get(0..4)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
+        let magic = u32::from_le_bytes(magic_bytes);
         if magic != MAGIC {
             return Err(DecodeError::InvalidMagic);
         }
 
-        let version = self.data[4];
+        let version = *self.data.get(4).ok_or(DecodeError::BufferTooSmall)?;
         if version != VERSION {
             return Err(DecodeError::UnsupportedVersion);
         }
 
-        let claimed_size = u32::from_le_bytes(self.data[6..10].try_into().unwrap()) as usize;
+        let size_bytes: [u8; 4] = self.data.get(6..10)
+            .ok_or(DecodeError::BufferTooSmall)?
+            .try_into()
+            .map_err(|_| DecodeError::BufferTooSmall)?;
+        let claimed_size = u32::from_le_bytes(size_bytes) as usize;
         if claimed_size != self.data.len() {
             return Err(DecodeError::BufferTooSmall);
         }
@@ -99,7 +103,10 @@ impl WireBuffer {
     }
 
     pub fn total_size(&self) -> u32 {
-        u32::from_le_bytes(self.data[6..10].try_into().unwrap())
+        self.data.get(6..10)
+            .and_then(|s| s.try_into().ok())
+            .map(u32::from_le_bytes)
+            .unwrap_or(0)
     }
 }
 
