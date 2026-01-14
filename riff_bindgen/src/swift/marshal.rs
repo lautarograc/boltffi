@@ -880,4 +880,21 @@ impl ReturnAbi {
             _ => ffi_call.to_string(),
         }
     }
+
+    pub fn async_resume_expr(&self) -> String {
+        match self {
+            Self::Unit => "continuation.resume(returning: ())".into(),
+            Self::Direct { .. } => "continuation.resume(returning: result)".into(),
+            Self::WireEncoded { decode_expr, throws, .. } => {
+                if *throws {
+                    format!(
+                        "do {{ let value = {} ; continuation.resume(returning: value) }} catch {{ continuation.resume(throwing: error) }}",
+                        decode_expr.replace("at: 0", "at: 0")
+                    )
+                } else {
+                    format!("continuation.resume(returning: {})", decode_expr)
+                }
+            }
+        }
+    }
 }

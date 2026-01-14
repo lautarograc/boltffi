@@ -39,6 +39,12 @@ pub enum AsyncReturnKind {
     Result(AsyncResultInfo),
 }
 
+pub enum AsyncReturnAbi {
+    Unit,
+    Direct { rust_type: proc_macro2::TokenStream },
+    WireEncoded { rust_type: proc_macro2::TokenStream },
+}
+
 pub fn extract_vec_inner(ty: &Type) -> Option<syn::Type> {
     if let Type::Path(path) = ty
         && let Some(segment) = path.path.segments.last()
@@ -215,6 +221,40 @@ pub fn classify_async_return(output: &ReturnType) -> AsyncReturnKind {
     }
 }
 
+pub fn classify_async_return_abi(output: &ReturnType) -> AsyncReturnAbi {
+    match output {
+        ReturnType::Default => AsyncReturnAbi::Unit,
+        ReturnType::Type(_, ty) => {
+            let type_str = quote!(#ty).to_string().replace(' ', "");
+
+            if type_str == "()" {
+                return AsyncReturnAbi::Unit;
+            }
+
+            if type_str == "String"
+                || type_str == "std::string::String"
+                || type_str.starts_with("Vec<")
+                || type_str.starts_with("Option<")
+                || type_str.starts_with("Result<")
+            {
+                return AsyncReturnAbi::WireEncoded {
+                    rust_type: quote! { #ty },
+                };
+            }
+
+            if is_primitive_type(&type_str) {
+                AsyncReturnAbi::Direct {
+                    rust_type: quote! { #ty },
+                }
+            } else {
+                AsyncReturnAbi::Direct {
+                    rust_type: quote! { #ty },
+                }
+            }
+        }
+    }
+}
+
 pub fn get_ffi_return_type(return_kind: &AsyncReturnKind) -> proc_macro2::TokenStream {
     match return_kind {
         AsyncReturnKind::Unit => quote! { () },
@@ -366,5 +406,47 @@ pub fn get_default_ffi_value(return_kind: &AsyncReturnKind) -> proc_macro2::Toke
             quote! { crate::FfiOption { is_some: 0, value: Default::default() } }
         }
         AsyncReturnKind::Result(info) => get_result_default(&info.ok_type),
+    }
+}
+
+pub fn get_async_ffi_return_type(abi: &AsyncReturnAbi) -> proc_macro2::TokenStream {
+    match abi {
+        AsyncReturnAbi::Unit => quote! { () },
+        AsyncReturnAbi::Direct { rust_type } => quote! { #rust_type },
+        AsyncReturnAbi::WireEncoded { .. } => quote! { crate::FfiBuf<u8> },
+    }
+}
+
+pub fn get_async_rust_return_type(abi: &AsyncReturnAbi) -> proc_macro2::TokenStream {
+    match abi {
+        AsyncReturnAbi::Unit => quote! { () },
+        AsyncReturnAbi::Direct { rust_type } | AsyncReturnAbi::WireEncoded { rust_type } => {
+            quote! { #rust_type }
+        }
+    }
+}
+
+pub fn get_async_complete_conversion(abi: &AsyncReturnAbi) -> proc_macro2::TokenStream {
+    match abi {
+        AsyncReturnAbi::Unit => quote! {
+            if !out_status.is_null() { *out_status = crate::FfiStatus::OK; }
+            ()
+        },
+        AsyncReturnAbi::Direct { .. } => quote! {
+            if !out_status.is_null() { *out_status = crate::FfiStatus::OK; }
+            result
+        },
+        AsyncReturnAbi::WireEncoded { .. } => quote! {
+            if !out_status.is_null() { *out_status = crate::FfiStatus::OK; }
+            crate::FfiBuf::wire_encode(&result)
+        },
+    }
+}
+
+pub fn get_async_default_ffi_value(abi: &AsyncReturnAbi) -> proc_macro2::TokenStream {
+    match abi {
+        AsyncReturnAbi::Unit => quote! { () },
+        AsyncReturnAbi::Direct { .. } => quote! { Default::default() },
+        AsyncReturnAbi::WireEncoded { .. } => quote! { crate::FfiBuf::default() },
     }
 }
