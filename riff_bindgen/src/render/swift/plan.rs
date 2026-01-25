@@ -21,22 +21,6 @@ impl SwiftCallMode {
         matches!(self, Self::Async { .. })
     }
 
-    pub fn symbol(&self) -> &str {
-        match self {
-            Self::Sync { symbol } => symbol,
-            Self::Async { start, .. } => start,
-        }
-    }
-
-    pub fn async_symbols(&self) -> Option<(&str, &str, &str, &str, &str)> {
-        match self {
-            Self::Async { start, poll, complete, cancel, free, .. } => {
-                Some((start, poll, complete, cancel, free))
-            }
-            Self::Sync { .. } => None,
-        }
-    }
-
     pub fn async_result(&self) -> Option<&SwiftAsyncResult> {
         match self {
             Self::Async { result, .. } => Some(result),
@@ -54,7 +38,6 @@ pub enum SwiftAsyncResult {
     },
     Encoded {
         swift_type: String,
-        decode_expr: String,
         throws: bool,
     },
 }
@@ -90,13 +73,6 @@ impl SwiftAsyncResult {
 
     pub fn throws(&self) -> bool {
         matches!(self, Self::Encoded { throws: true, .. })
-    }
-
-    pub fn decode_expr(&self) -> Option<&str> {
-        match self {
-            Self::Encoded { decode_expr, .. } => Some(decode_expr),
-            _ => None,
-        }
     }
 }
 
@@ -273,10 +249,6 @@ pub struct SwiftMethod {
 }
 
 impl SwiftMethod {
-    pub fn ffi_symbol(&self) -> &str {
-        self.mode.symbol()
-    }
-
     pub fn needs_handle(&self) -> bool {
         !self.is_static
     }
@@ -368,10 +340,6 @@ pub struct SwiftFunction {
 }
 
 impl SwiftFunction {
-    pub fn ffi_symbol(&self) -> &str {
-        self.mode.symbol()
-    }
-
     pub fn is_async(&self) -> bool {
         self.mode.is_async()
     }

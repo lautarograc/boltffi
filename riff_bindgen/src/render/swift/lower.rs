@@ -771,7 +771,6 @@ impl<'a> SwiftLowerer<'a> {
             },
             AsyncResultTransport::Encoded { codec } => SwiftAsyncResult::Encoded {
                 swift_type: codec::swift_type(codec),
-                decode_expr: codec::decode_inline(codec),
                 throws,
             },
             AsyncResultTransport::Handle { class_id, nullable } => SwiftAsyncResult::Direct {

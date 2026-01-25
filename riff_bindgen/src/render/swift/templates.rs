@@ -1,7 +1,8 @@
 use askama::Template;
 
 use super::plan::{
-    SwiftCallback, SwiftClass, SwiftEnum, SwiftField, SwiftFunction, SwiftRecord, SwiftVariant,
+    SwiftCallback, SwiftCallMode, SwiftClass, SwiftEnum, SwiftField, SwiftFunction, SwiftRecord,
+    SwiftVariant,
 };
 
 #[derive(Template)]

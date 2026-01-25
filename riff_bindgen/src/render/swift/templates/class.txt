@@ -33,8 +33,8 @@ public final class {{ cls.name }} {
 {%- for method in cls.methods %}
 
     public{% if method.is_static %} static{% endif %} func {{ method.name }}({% for p in method.params %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.mode.is_async() %} async throws{% if let Some(result) = method.mode.async_result() %}{% if let Some(ret) = result.swift_type() %} -> {{ ret }}{% endif %}{% endif %}{% else %}{% if method.returns.is_throws() %} throws{% endif %}{% if let Some(ret) = method.returns.swift_type() %} -> {{ ret }}{% endif %}{% endif %} {
-{%- if let Some((start, poll, complete, cancel, free)) = method.mode.async_symbols() %}
-{%- let result = method.mode.async_result().unwrap() %}
+{%- match method.mode %}
+{%- when SwiftCallMode::Async { start, poll, complete, cancel, free, result } %}
 {%- for param in method.params %}
 {%- if let Some(wrapper) = param.wrapper_code() %}
         {{ wrapper }}
@@ -103,13 +103,13 @@ public final class {{ cls.name }} {
                                     {{ prefix }}_free_buf_u8(buf)
 {%- if result.throws() %}
                                     do {
-                                        let value = {{ result.decode_expr().unwrap() }}
+                                        let value = {{ result.swift_type().unwrap() }}.decode(wireBuffer: wire, at: 0).value
                                         continuation.resume(returning: value)
                                     } catch {
                                         continuation.resume(throwing: error)
                                     }
 {%- else %}
-                                    continuation.resume(returning: {{ result.decode_expr().unwrap() }})
+                                    continuation.resume(returning: {{ result.swift_type().unwrap() }}.decode(wireBuffer: wire, at: 0).value)
 {%- endif %}
                                 }
                             case .finishWithoutContinuation:
@@ -143,7 +143,7 @@ public final class {{ cls.name }} {
                 continuation.resume(throwing: CancellationError())
             }
         }
-{%- else %}
+{%- when SwiftCallMode::Sync { symbol } %}
 {%- for param in method.params %}
 {%- if let Some(wrapper) = param.wrapper_code() %}
         {{ wrapper }}
@@ -151,15 +151,15 @@ public final class {{ cls.name }} {
 {%- endfor %}
 {%- if method.returns.is_void() %}
 {%- if method.needs_handle() %}
-        {{ method.ffi_symbol() }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
+        {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
 {%- else %}
-        {{ method.ffi_symbol() }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+        {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {%- elif method.returns.is_wire_encoded() %}
 {%- if method.needs_handle() %}
-        let buf = {{ method.ffi_symbol() }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
+        let buf = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
 {%- else %}
-        let buf = {{ method.ffi_symbol() }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+        let buf = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
         defer { {{ prefix }}_free_buf_u8(buf) }
         let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
@@ -171,27 +171,27 @@ public final class {{ cls.name }} {
 {%- elif let Some((class_name, nullable)) = method.returns.handle_info() %}
 {%- if nullable %}
 {%- if method.needs_handle() %}
-        guard let ptr = {{ method.ffi_symbol() }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %}) else { return nil }
+        guard let ptr = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %}) else { return nil }
 {%- else %}
-        guard let ptr = {{ method.ffi_symbol() }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else { return nil }
+        guard let ptr = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else { return nil }
 {%- endif %}
         return {{ class_name }}(handle: ptr)
 {%- else %}
 {%- if method.needs_handle() %}
-        let ptr = {{ method.ffi_symbol() }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})!
+        let ptr = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})!
 {%- else %}
-        let ptr = {{ method.ffi_symbol() }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
+        let ptr = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
 {%- endif %}
         return {{ class_name }}(handle: ptr)
 {%- endif %}
 {%- else %}
 {%- if method.needs_handle() %}
-        return {{ method.ffi_symbol() }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
+        return {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
 {%- else %}
-        return {{ method.ffi_symbol() }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+        return {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {%- endif %}
-{%- endif %}
+{%- endmatch %}
     }
 {%- endfor %}
 }
