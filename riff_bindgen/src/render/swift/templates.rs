@@ -2,7 +2,7 @@ use askama::Template;
 
 use super::plan::{
     SwiftCallback, SwiftCallMode, SwiftClass, SwiftEnum, SwiftField, SwiftFunction, SwiftRecord,
-    SwiftVariant,
+    SwiftStreamMode, SwiftVariant,
 };
 
 #[derive(Template)]
@@ -11,20 +11,32 @@ pub struct PreambleTemplate<'a> {
     pub prefix: &'a str,
     pub ffi_module_name: Option<&'a str>,
     pub has_async: bool,
+    pub has_streams: bool,
 }
 
 impl<'a> PreambleTemplate<'a> {
-    pub fn new(prefix: &'a str, ffi_module_name: Option<&'a str>, has_async: bool) -> Self {
+    pub fn new(
+        prefix: &'a str,
+        ffi_module_name: Option<&'a str>,
+        has_async: bool,
+        has_streams: bool,
+    ) -> Self {
         Self {
             prefix,
             ffi_module_name,
             has_async,
+            has_streams,
         }
     }
 }
 
-pub fn render_preamble(prefix: &str, ffi_module_name: Option<&str>, has_async: bool) -> String {
-    PreambleTemplate::new(prefix, ffi_module_name, has_async)
+pub fn render_preamble(
+    prefix: &str,
+    ffi_module_name: Option<&str>,
+    has_async: bool,
+    has_streams: bool,
+) -> String {
+    PreambleTemplate::new(prefix, ffi_module_name, has_async, has_streams)
         .render()
         .unwrap()
 }
@@ -179,7 +191,9 @@ impl SwiftEmitter {
             &self.prefix,
             self.ffi_module_name.as_deref(),
             module.has_async(),
+            module.has_streams(),
         ));
+        output.push_str("\n\n");
 
         for record in &module.records {
             output.push_str(&render_record(record));

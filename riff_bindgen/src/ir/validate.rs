@@ -1,6 +1,6 @@
 use crate::ir::contract::{FfiContract, TypeCatalog};
-use crate::ir::definitions::{EnumRepr, ParamDef, ParamPassing, ReturnDef, VariantPayload};
-use crate::ir::ids::{EnumId, FieldName, FunctionId, ParamName, VariantName};
+use crate::ir::definitions::{EnumRepr, ParamDef, ParamPassing, ReturnDef, StreamDef, VariantPayload};
+use crate::ir::ids::{ClassId, EnumId, FieldName, FunctionId, ParamName, StreamId, VariantName};
 use crate::ir::types::TypeExpr;
 
 #[derive(Debug, Clone)]
@@ -9,6 +9,11 @@ pub enum ValidationError {
     InvalidParamPassing { context: String, message: String },
     InvalidPrimitive { context: String, message: String },
     NonEncodableInData { context: String, message: String },
+    InvalidStreamItemType {
+        class_id: ClassId,
+        stream_id: StreamId,
+        reason: String,
+    },
 }
 
 pub fn validate_contract(contract: &FfiContract) -> Result<(), Vec<ValidationError>> {
@@ -71,6 +76,10 @@ pub fn validate_contract(contract: &FfiContract) -> Result<(), Vec<ValidationErr
         class.methods.iter().for_each(|method| {
             let ctx = format!("{}::{}", class.id, method.id);
             validate_callable_inner(&ctx, &method.params, &method.returns, catalog, &mut errors);
+        });
+
+        class.streams.iter().for_each(|stream| {
+            validate_stream_item_type(&class.id, stream, catalog, &mut errors);
         });
     });
 
@@ -355,5 +364,43 @@ fn validate_param_passing(
             })
         }
         _ => Ok(()),
+    }
+}
+
+fn validate_stream_item_type(
+    class_id: &ClassId,
+    stream: &StreamDef,
+    catalog: &TypeCatalog,
+    errors: &mut Vec<ValidationError>,
+) {
+    let ctx = format!("{}::{}::item", class_id, stream.id);
+    if let Err(e) = validate_type_expr(&stream.item_type, catalog) {
+        errors.push(ValidationError::UnresolvedType {
+            context: ctx.clone(),
+            error: e,
+        });
+    }
+    if !is_wire_encodable(&stream.item_type) {
+        errors.push(ValidationError::InvalidStreamItemType {
+            class_id: class_id.clone(),
+            stream_id: stream.id.clone(),
+            reason: "stream items must be wire-encodable (no Handle or Callback)".to_string(),
+        });
+    }
+}
+
+fn is_wire_encodable(ty: &TypeExpr) -> bool {
+    match ty {
+        TypeExpr::Void
+        | TypeExpr::Primitive(_)
+        | TypeExpr::String
+        | TypeExpr::Bytes
+        | TypeExpr::Record(_)
+        | TypeExpr::Enum(_)
+        | TypeExpr::Custom(_)
+        | TypeExpr::Builtin(_) => true,
+        TypeExpr::Option(inner) | TypeExpr::Vec(inner) => is_wire_encodable(inner),
+        TypeExpr::Result { ok, err } => is_wire_encodable(ok) && is_wire_encodable(err),
+        TypeExpr::Handle(_) | TypeExpr::Callback(_) => false,
     }
 }

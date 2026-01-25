@@ -194,4 +194,227 @@ public final class {{ cls.name }} {
 {%- endmatch %}
     }
 {%- endfor %}
+{%- for stream in cls.streams %}
+
+{%- match stream.mode %}
+{%- when SwiftStreamMode::Async %}
+    public func {{ stream.name }}() -> AsyncStream<{{ stream.item_type }}> {
+        AsyncStream<{{ stream.item_type }}> { continuation in
+            guard let subscription = {{ stream.subscribe }}(self.handle) else {
+                continuation.finish()
+                return
+            }
+            let context = WireStreamContextBase(
+                subscription: subscription, batchSize: 16,
+                popBatch: {{ stream.pop_batch }},
+                poll: {{ stream.poll }},
+                unsubscribe: {{ stream.unsubscribe }},
+                freeFn: {{ stream.free }},
+                freeBuf: {{ stream.free_buf }},
+                atomicCas: {{ stream.atomic_cas }},
+                processItems: { wire in
+                    let count = Int(wire.readU32(at: 0))
+                    var offset = 4
+                    for _ in 0..<count {
+                        let item = {{ stream.item_decode_expr }}
+                        _ = continuation.yield(item)
+                    }
+                },
+                finish: { continuation.finish() }
+            )
+            continuation.onTermination = { @Sendable _ in context.requestTermination() }
+            context.start()
+        }
+    }
+{%- when SwiftStreamMode::Batch { class_name, method_name_pascal } %}
+    public func {{ stream.name }}() -> {{ class_name }}{{ method_name_pascal }}Subscription {
+        {{ class_name }}{{ method_name_pascal }}Subscription(
+            handle: {{ stream.subscribe }}(self.handle),
+            popBatch: {{ stream.pop_batch }},
+            wait: {{ stream.wait }},
+            unsubscribe: {{ stream.unsubscribe }},
+            freeFn: {{ stream.free }},
+            freeBuf: {{ stream.free_buf }}
+        )
+    }
+{%- when SwiftStreamMode::Callback { class_name, method_name_pascal } %}
+    public func {{ stream.name }}(callback: @escaping ({{ stream.item_type }}) -> Void) -> {{ class_name }}{{ method_name_pascal }}Cancellable {
+        guard let subscription = {{ stream.subscribe }}(self.handle) else {
+            return {{ class_name }}{{ method_name_pascal }}Cancellable {}
+        }
+
+        final class CallbackContext: @unchecked Sendable {
+            let subscription: SubscriptionHandle
+            let batchSize: UInt
+            let popBatch: (SubscriptionHandle, UInt) -> FfiBuf_u8
+            let unsubscribe: (SubscriptionHandle?) -> Void
+            let freeFn: (SubscriptionHandle?) -> Void
+            let freeBuf: (FfiBuf_u8) -> Void
+            let atomicCas: (UnsafeMutablePointer<UInt8>?, UInt8, UInt8) -> Bool
+            let callback: ({{ stream.item_type }}) -> Void
+            private var lifecycleTag: UInt8 = 0
+            private var callbackTag: UInt8 = 0
+
+            init(
+                subscription: SubscriptionHandle, batchSize: UInt,
+                popBatch: @escaping (SubscriptionHandle, UInt) -> FfiBuf_u8,
+                poll: @escaping (SubscriptionHandle?, UInt64, StreamContinuationCallback?) -> Void,
+                unsubscribe: @escaping (SubscriptionHandle?) -> Void,
+                freeFn: @escaping (SubscriptionHandle?) -> Void,
+                freeBuf: @escaping (FfiBuf_u8) -> Void,
+                atomicCas: @escaping (UnsafeMutablePointer<UInt8>?, UInt8, UInt8) -> Bool,
+                callback: @escaping ({{ stream.item_type }}) -> Void
+            ) {
+                self.subscription = subscription; self.batchSize = batchSize
+                self.popBatch = popBatch; self.unsubscribe = unsubscribe
+                self.freeFn = freeFn; self.freeBuf = freeBuf; self.atomicCas = atomicCas
+                self.callback = callback
+            }
+
+            func start() { registerPoll() }
+
+            func requestTermination() {
+                let started = withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 1) }
+                if started { unsubscribe(subscription); _ = withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 1, 2) } }
+                attemptFinalize()
+            }
+
+            private func attemptFinalize() {
+                guard (withUnsafeMutablePointer(to: &callbackTag) { atomicCas($0, 0, 0) }) else { return }
+                guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 2, 3) }) else { return }
+                freeFn(subscription)
+            }
+
+            private func schedulePoll() { Task { [self] in await Task.yield(); registerPoll() } }
+
+            private func registerPoll() {
+                guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 0) }) else { attemptFinalize(); return }
+                let data = UInt64(UInt(bitPattern: Unmanaged.passRetained(self).toOpaque()))
+                {{ stream.poll }}(subscription, data) { data, result in
+                    Unmanaged<CallbackContext>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(data))!).takeRetainedValue().handlePoll(result)
+                }
+            }
+
+            private func handlePoll(_ pollResult: Int8) {
+                let isClosed = pollResult == StreamPollResult.closed.rawValue
+                guard (withUnsafeMutablePointer(to: &callbackTag) { atomicCas($0, 0, 1) }) else { attemptFinalize(); return }
+                defer { _ = withUnsafeMutablePointer(to: &callbackTag) { atomicCas($0, 1, 0) }; attemptFinalize() }
+                guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 0) }) else { return }
+                while true {
+                    let buf = popBatch(subscription, batchSize)
+                    guard buf.len > 0, let ptr = buf.ptr else { freeBuf(buf); break }
+                    let wire = WireBuffer(ptr: ptr, len: Int(buf.len))
+                    freeBuf(buf)
+                    let count = Int(wire.readU32(at: 0))
+                    var offset = 4
+                    for _ in 0..<count {
+                        let item = {{ stream.item_decode_expr }}
+                        callback(item)
+                    }
+                }
+                if isClosed { requestTermination(); return }
+                guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 0) }) else { return }
+                schedulePoll()
+            }
+        }
+
+        let context = CallbackContext(
+            subscription: subscription, batchSize: 16,
+            popBatch: {{ stream.pop_batch }},
+            poll: {{ stream.poll }},
+            unsubscribe: {{ stream.unsubscribe }},
+            freeFn: {{ stream.free }},
+            freeBuf: {{ stream.free_buf }},
+            atomicCas: {{ stream.atomic_cas }},
+            callback: callback
+        )
+        context.start()
+        return {{ class_name }}{{ method_name_pascal }}Cancellable { context.requestTermination() }
+    }
+{%- endmatch %}
+{%- endfor %}
 }
+{%- for stream in cls.streams %}
+{%- match stream.mode %}
+{%- when SwiftStreamMode::Batch { class_name, method_name_pascal } %}
+
+public final class {{ class_name }}{{ method_name_pascal }}Subscription {
+    private let handle: SubscriptionHandle?
+    private let popBatchFn: (SubscriptionHandle, UInt) -> FfiBuf_u8
+    private let waitFn: (SubscriptionHandle, UInt32) -> Int32
+    private let unsubscribeFn: (SubscriptionHandle?) -> Void
+    private let freeFn: (SubscriptionHandle?) -> Void
+    private let freeBuf: (FfiBuf_u8) -> Void
+    private var isUnsubscribed = false
+
+    init(
+        handle: SubscriptionHandle?,
+        popBatch: @escaping (SubscriptionHandle, UInt) -> FfiBuf_u8,
+        wait: @escaping (SubscriptionHandle, UInt32) -> Int32,
+        unsubscribe: @escaping (SubscriptionHandle?) -> Void,
+        freeFn: @escaping (SubscriptionHandle?) -> Void,
+        freeBuf: @escaping (FfiBuf_u8) -> Void
+    ) {
+        self.handle = handle
+        self.popBatchFn = popBatch
+        self.waitFn = wait
+        self.unsubscribeFn = unsubscribe
+        self.freeFn = freeFn
+        self.freeBuf = freeBuf
+    }
+
+    deinit {
+        freeFn(handle)
+    }
+
+    public func popBatch(maxCount: UInt = 16) -> [{{ stream.item_type }}] {
+        guard let h = handle else { return [] }
+        let buf = popBatchFn(h, maxCount)
+        guard buf.len > 0, let ptr = buf.ptr else { freeBuf(buf); return [] }
+        let wire = WireBuffer(ptr: ptr, len: Int(buf.len))
+        freeBuf(buf)
+        let count = Int(wire.readU32(at: 0))
+        var offset = 4
+        var result: [{{ stream.item_type }}] = []
+        result.reserveCapacity(count)
+        for _ in 0..<count {
+            let item = {{ stream.item_decode_expr }}
+            result.append(item)
+        }
+        return result
+    }
+
+    public func wait(timeout: UInt32) -> Int32 {
+        guard let h = handle else { return -1 }
+        return waitFn(h, timeout)
+    }
+
+    public func unsubscribe() {
+        guard !isUnsubscribed else { return }
+        isUnsubscribed = true
+        unsubscribeFn(handle)
+    }
+}
+{%- when SwiftStreamMode::Callback { class_name, method_name_pascal } %}
+
+public final class {{ class_name }}{{ method_name_pascal }}Cancellable {
+    private var isCancelled = false
+    private let cancelAction: () -> Void
+
+    init(onCancel: @escaping () -> Void = {}) {
+        self.cancelAction = onCancel
+    }
+
+    deinit {
+        cancel()
+    }
+
+    public func cancel() {
+        guard !isCancelled else { return }
+        isCancelled = true
+        cancelAction()
+    }
+}
+{%- when SwiftStreamMode::Async %}
+{%- endmatch %}
+{%- endfor %}

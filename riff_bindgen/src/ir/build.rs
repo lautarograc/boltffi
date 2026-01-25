@@ -2,11 +2,11 @@ use crate::ir::contract::{FfiContract, PackageInfo, TypeCatalog};
 use crate::ir::definitions::{
     CStyleVariant, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, CustomTypeDef,
     DataVariant, DeprecationInfo, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef,
-    ParamPassing, Receiver, RecordDef, ReturnDef, VariantPayload,
+    ParamPassing, Receiver, RecordDef, ReturnDef, StreamDef, StreamMode, VariantPayload,
 };
 use crate::ir::ids::{
     BuiltinId, CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId,
-    MethodId, ParamName, QualifiedName, RecordId, VariantName,
+    MethodId, ParamName, QualifiedName, RecordId, StreamId, VariantName,
 };
 use crate::ir::types::{BuiltinDef, BuiltinKind, PrimitiveType, TypeExpr};
 use crate::model::{self, Module};
@@ -187,8 +187,27 @@ impl<'m> ContractBuilder<'m> {
                 .iter()
                 .map(|m| self.convert_method(m))
                 .collect(),
+            streams: class
+                .streams
+                .iter()
+                .map(|s| self.convert_stream(s))
+                .collect(),
             doc: class.doc.clone(),
             deprecated: class.deprecated.as_ref().map(convert_deprecation),
+        }
+    }
+
+    fn convert_stream(&self, stream: &model::StreamMethod) -> StreamDef {
+        StreamDef {
+            id: StreamId::new(&stream.name),
+            item_type: self.convert_type(&stream.item_type),
+            mode: match stream.mode {
+                model::StreamMode::Async => StreamMode::Async,
+                model::StreamMode::Batch => StreamMode::Batch,
+                model::StreamMode::Callback => StreamMode::Callback,
+            },
+            doc: stream.doc.clone(),
+            deprecated: stream.deprecated.as_ref().map(convert_deprecation),
         }
     }
 

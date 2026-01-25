@@ -226,6 +226,14 @@ pub mod naming {
         ))
     }
 
+    pub fn free_buf_u8() -> Name<GlobalSymbol> {
+        Name::new(format!("{}_free_buf_u8", FFI_PREFIX))
+    }
+
+    pub fn atomic_u8_cas() -> Name<GlobalSymbol> {
+        Name::new(format!("{}_atomic_u8_cas", FFI_PREFIX))
+    }
+
     pub fn trait_ffi_free(trait_name: &str) -> Name<GlobalSymbol> {
         Name::new(format!(
             "{}_{}_free",

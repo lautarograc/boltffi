@@ -63,6 +63,19 @@ pub fn decode_inline(codec: &CodecPlan) -> String {
     }
 }
 
+pub fn decode_stream_item(codec: &CodecPlan) -> String {
+    let (reader, size_kind) = decode_expr(codec);
+    let reader = reader.replace(OFFSET_VAR, "offset");
+    match size_kind {
+        SizeKind::Fixed(size) => {
+            format!("{{ let v = {}; offset += {}; return v }}()", reader, size)
+        }
+        SizeKind::Variable => {
+            format!("{{ let (v, s) = {}; offset += s; return v }}()", reader)
+        }
+    }
+}
+
 pub fn decode_value_at(codec: &CodecPlan, offset_expr: &str) -> String {
     let (reader, size_kind) = decode_expr(codec);
     let expr = reader.replace(OFFSET_VAR, offset_expr);

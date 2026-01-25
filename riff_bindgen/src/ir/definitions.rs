@@ -1,6 +1,6 @@
 use crate::ir::ids::{
     CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId, MethodId,
-    ParamName, QualifiedName, RecordId, VariantName,
+    ParamName, QualifiedName, RecordId, StreamId, VariantName,
 };
 use crate::ir::types::{PrimitiveType, TypeExpr};
 
@@ -110,11 +110,28 @@ pub enum ReturnDef {
     Result { ok: TypeExpr, err: TypeExpr },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamMode {
+    Async,
+    Batch,
+    Callback,
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamDef {
+    pub id: StreamId,
+    pub item_type: TypeExpr,
+    pub mode: StreamMode,
+    pub doc: Option<String>,
+    pub deprecated: Option<DeprecationInfo>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClassDef {
     pub id: ClassId,
     pub constructors: Vec<ConstructorDef>,
     pub methods: Vec<MethodDef>,
+    pub streams: Vec<StreamDef>,
     pub doc: Option<String>,
     pub deprecated: Option<DeprecationInfo>,
 }

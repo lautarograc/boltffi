@@ -1,3 +1,4 @@
+use heck::ToLowerCamelCase;
 use riff_ffi_rules::naming::{
     self, snake_to_camel as camel_case, to_upper_camel_case as pascal_case,
 };
@@ -6,12 +7,12 @@ use std::collections::HashMap;
 
 use crate::ir::AbiContract;
 use crate::ir::abi::{
-    AbiCall, AbiParam, AsyncResultTransport, CallId, CallMode, ErrorTransport, ParamRole,
-    ReturnTransport,
+    AbiCall, AbiParam, AbiStream, AsyncResultTransport, CallId, CallMode, ErrorTransport,
+    ParamRole, ReturnTransport, StreamItemTransport,
 };
 use crate::ir::codec::{CodecPlan, EnumLayout, RecordLayout, VariantPayloadLayout};
 use crate::ir::contract::FfiContract;
-use crate::ir::definitions::{EnumRepr, ParamDef, Receiver, ReturnDef};
+use crate::ir::definitions::{EnumRepr, ParamDef, Receiver, ReturnDef, StreamMode};
 use crate::ir::ids::{CallbackId, ClassId, EnumId, ParamName, RecordId};
 use crate::ir::plan::AbiType;
 use crate::ir::types::TypeExpr;
@@ -21,7 +22,7 @@ use super::plan::{
     SwiftAsyncConversion, SwiftAsyncResult, SwiftCallback, SwiftCallbackMethod,
     SwiftCallbackParam, SwiftCallMode, SwiftClass, SwiftConstructor, SwiftConversion, SwiftEnum,
     SwiftField, SwiftFunction, SwiftMethod, SwiftModule, SwiftParam, SwiftRecord, SwiftReturn,
-    SwiftVariant, SwiftVariantPayload,
+    SwiftStream, SwiftStreamMode, SwiftVariant, SwiftVariantPayload,
 };
 
 struct AbiIndex {
@@ -201,7 +202,7 @@ impl<'a> SwiftLowerer<'a> {
                             EnumRepr::CStyle { variants, .. } => variants
                                 .iter()
                                 .map(|v| SwiftVariant {
-                                    swift_name: camel_case(v.name.as_str()),
+                                    swift_name: v.name.as_str().to_lower_camel_case(),
                                     discriminant: v.discriminant,
                                     payload: SwiftVariantPayload::Unit,
                                 })
@@ -214,7 +215,7 @@ impl<'a> SwiftLowerer<'a> {
                         variants
                             .iter()
                             .map(|v| SwiftVariant {
-                                swift_name: camel_case(v.name.as_str()),
+                                swift_name: v.name.as_str().to_lower_camel_case(),
                                 discriminant: v.discriminant,
                                 payload: self.lower_variant_payload_layout(&v.payload),
                             })
@@ -320,15 +321,59 @@ impl<'a> SwiftLowerer<'a> {
                     })
                     .collect();
 
+                let streams = self.lower_streams_for_class(&def.id, &class_name);
+
                 SwiftClass {
                     name: class_name,
                     ffi_free,
                     constructors,
                     methods,
+                    streams,
                     doc: def.doc.clone(),
                 }
             })
             .collect()
+    }
+
+    fn lower_streams_for_class(&self, class_id: &ClassId, class_name: &str) -> Vec<SwiftStream> {
+        self.abi
+            .streams
+            .iter()
+            .filter(|s| &s.class_id == class_id)
+            .map(|stream| self.lower_stream(stream, class_name))
+            .collect()
+    }
+
+    fn lower_stream(&self, stream: &AbiStream, class_name: &str) -> SwiftStream {
+        let StreamItemTransport::WireEncoded { codec } = &stream.item;
+        let method_name_pascal = pascal_case(stream.stream_id.as_str());
+
+        let mode = match stream.mode {
+            StreamMode::Async => SwiftStreamMode::Async,
+            StreamMode::Batch => SwiftStreamMode::Batch {
+                class_name: class_name.to_string(),
+                method_name_pascal: method_name_pascal.clone(),
+            },
+            StreamMode::Callback => SwiftStreamMode::Callback {
+                class_name: class_name.to_string(),
+                method_name_pascal: method_name_pascal.clone(),
+            },
+        };
+
+        SwiftStream {
+            name: camel_case(stream.stream_id.as_str()),
+            mode,
+            item_type: codec::swift_type(codec),
+            item_decode_expr: codec::decode_stream_item(codec),
+            subscribe: stream.subscribe.to_string(),
+            poll: stream.poll.to_string(),
+            pop_batch: stream.pop_batch.to_string(),
+            wait: stream.wait.to_string(),
+            unsubscribe: stream.unsubscribe.to_string(),
+            free: stream.free.to_string(),
+            free_buf: self.abi.free_buf.to_string(),
+            atomic_cas: self.abi.atomic_cas.to_string(),
+        }
     }
 }
 

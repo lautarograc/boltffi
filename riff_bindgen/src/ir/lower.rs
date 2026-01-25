@@ -4,8 +4,9 @@ use std::collections::{HashMap, HashSet};
 use riff_ffi_rules::naming;
 
 use crate::ir::abi::{
-    AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiParam, AsyncCall,
-    AsyncResultTransport, CallId, CallMode, ErrorTransport, ParamRole, ReturnTransport,
+    AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiParam, AbiStream,
+    AsyncCall, AsyncResultTransport, CallId, CallMode, ErrorTransport, ParamRole,
+    ReturnTransport, StreamItemTransport,
 };
 use crate::ir::callback_plan::{
     CallbackInvocationPlan, CallbackMethodPlan, CallbackParamPlan, CallbackParamStrategy,
@@ -18,7 +19,7 @@ use crate::ir::codec::{
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, EnumRepr, FunctionDef,
-    MethodDef, ParamDef, ParamPassing, Receiver, RecordDef, ReturnDef, VariantPayload,
+    MethodDef, ParamDef, ParamPassing, Receiver, RecordDef, ReturnDef, StreamDef, VariantPayload,
 };
 use crate::ir::ids::{
     CallbackId, ClassId, EnumId, FieldName, FunctionId, MethodId, ParamName, RecordId,
@@ -108,12 +109,27 @@ impl<'c> Lowerer<'c> {
             })
             .collect();
 
+        let streams = self
+            .contract
+            .catalog
+            .all_classes()
+            .flat_map(|class| {
+                class
+                    .streams
+                    .iter()
+                    .map(|stream| self.abi_stream(&class.id, stream))
+            })
+            .collect();
+
         AbiContract {
             package: self.contract.package.clone(),
             calls,
             callbacks,
+            streams,
             record_codecs,
             enum_codecs,
+            free_buf: naming::free_buf_u8(),
+            atomic_cas: naming::atomic_u8_cas(),
         }
     }
 
@@ -205,6 +221,25 @@ impl<'c> Lowerer<'c> {
             register_fn: naming::callback_register_fn(callback.id.as_str()),
             create_fn: naming::callback_create_fn(callback.id.as_str()),
             methods,
+        }
+    }
+
+    fn abi_stream(&self, class_id: &ClassId, stream: &StreamDef) -> AbiStream {
+        let class_name = class_id.as_str();
+        let stream_name = stream.id.as_str();
+        let item_codec = self.build_codec(&stream.item_type);
+
+        AbiStream {
+            class_id: class_id.clone(),
+            stream_id: stream.id.clone(),
+            mode: stream.mode,
+            item: StreamItemTransport::WireEncoded { codec: item_codec },
+            subscribe: naming::stream_ffi_subscribe(class_name, stream_name),
+            poll: naming::stream_ffi_poll(class_name, stream_name),
+            pop_batch: naming::stream_ffi_pop_batch(class_name, stream_name),
+            wait: naming::stream_ffi_wait(class_name, stream_name),
+            unsubscribe: naming::stream_ffi_unsubscribe(class_name, stream_name),
+            free: naming::stream_ffi_free(class_name, stream_name),
         }
     }
 
@@ -1776,6 +1811,7 @@ mod tests {
             id: class_id.clone(),
             constructors: vec![],
             methods: vec![],
+            streams: vec![],
             doc: None,
             deprecated: None,
         });
@@ -1814,6 +1850,7 @@ mod tests {
             id: class_id.clone(),
             constructors: vec![],
             methods: vec![],
+            streams: vec![],
             doc: None,
             deprecated: None,
         });
@@ -1844,6 +1881,7 @@ mod tests {
             id: class_id.clone(),
             constructors: vec![],
             methods: vec![],
+            streams: vec![],
             doc: None,
             deprecated: None,
         });
@@ -1880,6 +1918,7 @@ mod tests {
             id: class_id.clone(),
             constructors: vec![],
             methods: vec![],
+            streams: vec![],
             doc: None,
             deprecated: None,
         });
@@ -2119,6 +2158,7 @@ mod tests {
             id: class_id.clone(),
             constructors: vec![],
             methods: vec![],
+            streams: vec![],
             doc: None,
             deprecated: None,
         });
@@ -2339,6 +2379,7 @@ mod tests {
             id: class_id.clone(),
             constructors: vec![],
             methods: vec![],
+            streams: vec![],
             doc: None,
             deprecated: None,
         });
@@ -2376,6 +2417,7 @@ mod tests {
             id: class_id.clone(),
             constructors: vec![],
             methods: vec![],
+            streams: vec![],
             doc: None,
             deprecated: None,
         });

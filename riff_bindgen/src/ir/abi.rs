@@ -2,8 +2,9 @@ use riff_ffi_rules::naming::{CreateFn, GlobalSymbol, Name, RegisterFn, VtableFie
 
 use crate::ir::codec::CodecPlan;
 use crate::ir::contract::PackageInfo;
+use crate::ir::definitions::StreamMode;
 use crate::ir::ids::{
-    CallbackId, ClassId, EnumId, FunctionId, MethodId, ParamName, RecordId,
+    CallbackId, ClassId, EnumId, FunctionId, MethodId, ParamName, RecordId, StreamId,
 };
 use crate::ir::plan::{AbiType, CallbackStyle, Mutability};
 
@@ -12,8 +13,30 @@ pub struct AbiContract {
     pub package: PackageInfo,
     pub calls: Vec<AbiCall>,
     pub callbacks: Vec<AbiCallbackInvocation>,
+    pub streams: Vec<AbiStream>,
     pub record_codecs: Vec<(RecordId, CodecPlan)>,
     pub enum_codecs: Vec<(EnumId, CodecPlan)>,
+    pub free_buf: Name<GlobalSymbol>,
+    pub atomic_cas: Name<GlobalSymbol>,
+}
+
+#[derive(Debug, Clone)]
+pub enum StreamItemTransport {
+    WireEncoded { codec: CodecPlan },
+}
+
+#[derive(Debug, Clone)]
+pub struct AbiStream {
+    pub class_id: ClassId,
+    pub stream_id: StreamId,
+    pub mode: StreamMode,
+    pub item: StreamItemTransport,
+    pub subscribe: Name<GlobalSymbol>,
+    pub poll: Name<GlobalSymbol>,
+    pub pop_batch: Name<GlobalSymbol>,
+    pub wait: Name<GlobalSymbol>,
+    pub unsubscribe: Name<GlobalSymbol>,
+    pub free: Name<GlobalSymbol>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

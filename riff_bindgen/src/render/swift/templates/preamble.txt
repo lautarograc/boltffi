@@ -415,7 +415,7 @@ extension Data {
     }
 }
 
-extension Array where Element == UInt8 {
+extension [UInt8] {
     @inlinable mutating func appendBool(_ value: Bool) { append(value ? 1 : 0) }
     @inlinable mutating func appendU8(_ value: UInt8) { append(value) }
     @inlinable mutating func appendI8(_ value: Int8) { append(UInt8(bitPattern: value)) }
@@ -484,3 +484,85 @@ extension Array where Element == UInt8 {
     }
 }
 
+{%- if has_streams %}
+
+typealias SubscriptionHandle = OpaquePointer
+typealias StreamContinuationCallback = @convention(c) (UInt64, Int8) -> Void
+
+enum StreamPollResult: Int8 {
+    case ready = 0
+    case closed = 1
+}
+
+final class WireStreamContextBase: @unchecked Sendable {
+    let subscription: SubscriptionHandle
+    let batchSize: UInt
+    let popBatch: (SubscriptionHandle, UInt) -> FfiBuf_u8
+    let poll: (SubscriptionHandle?, UInt64, StreamContinuationCallback?) -> Void
+    let unsubscribe: (SubscriptionHandle?) -> Void
+    let freeFn: (SubscriptionHandle?) -> Void
+    let freeBuf: (FfiBuf_u8) -> Void
+    let atomicCas: (UnsafeMutablePointer<UInt8>?, UInt8, UInt8) -> Bool
+    let processItems: (WireBuffer) -> Void
+    let finish: () -> Void
+    private var lifecycleTag: UInt8 = 0
+    private var callbackTag: UInt8 = 0
+
+    init(
+        subscription: SubscriptionHandle, batchSize: UInt,
+        popBatch: @escaping (SubscriptionHandle, UInt) -> FfiBuf_u8,
+        poll: @escaping (SubscriptionHandle?, UInt64, StreamContinuationCallback?) -> Void,
+        unsubscribe: @escaping (SubscriptionHandle?) -> Void,
+        freeFn: @escaping (SubscriptionHandle?) -> Void,
+        freeBuf: @escaping (FfiBuf_u8) -> Void,
+        atomicCas: @escaping (UnsafeMutablePointer<UInt8>?, UInt8, UInt8) -> Bool,
+        processItems: @escaping (WireBuffer) -> Void,
+        finish: @escaping () -> Void
+    ) {
+        self.subscription = subscription; self.batchSize = batchSize
+        self.popBatch = popBatch; self.poll = poll; self.unsubscribe = unsubscribe
+        self.freeFn = freeFn; self.freeBuf = freeBuf; self.atomicCas = atomicCas
+        self.processItems = processItems; self.finish = finish
+    }
+
+    func start() { registerPoll() }
+
+    func requestTermination() {
+        let started = withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 1) }
+        if started { unsubscribe(subscription); _ = withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 1, 2) } }
+        attemptFinalize()
+    }
+
+    private func attemptFinalize() {
+        guard (withUnsafeMutablePointer(to: &callbackTag) { atomicCas($0, 0, 0) }) else { return }
+        guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 2, 3) }) else { return }
+        freeFn(subscription); finish()
+    }
+
+    private func schedulePoll() { Task { [self] in await Task.yield(); registerPoll() } }
+
+    private func registerPoll() {
+        guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 0) }) else { attemptFinalize(); return }
+        let data = UInt64(UInt(bitPattern: Unmanaged.passRetained(self).toOpaque()))
+        poll(subscription, data) { data, result in
+            Unmanaged<WireStreamContextBase>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(data))!).takeRetainedValue().handlePoll(result)
+        }
+    }
+
+    private func handlePoll(_ pollResult: Int8) {
+        let isClosed = pollResult == StreamPollResult.closed.rawValue
+        guard (withUnsafeMutablePointer(to: &callbackTag) { atomicCas($0, 0, 1) }) else { attemptFinalize(); return }
+        defer { _ = withUnsafeMutablePointer(to: &callbackTag) { atomicCas($0, 1, 0) }; attemptFinalize() }
+        guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 0) }) else { return }
+        while true {
+            let buf = popBatch(subscription, batchSize)
+            guard buf.len > 0, let ptr = buf.ptr else { freeBuf(buf); break }
+            processItems(WireBuffer(ptr: ptr, len: Int(buf.len)))
+            freeBuf(buf)
+        }
+        if isClosed { requestTermination(); return }
+        guard (withUnsafeMutablePointer(to: &lifecycleTag) { atomicCas($0, 0, 0) }) else { return }
+        schedulePoll()
+    }
+}
+{%- endif %}

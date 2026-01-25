@@ -100,6 +100,10 @@ impl SwiftModule {
                 .iter()
                 .any(|c| c.methods.iter().any(|m| m.mode.is_async()))
     }
+
+    pub fn has_streams(&self) -> bool {
+        self.classes.iter().any(|c| !c.streams.is_empty())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -220,7 +224,31 @@ pub struct SwiftClass {
     pub ffi_free: String,
     pub constructors: Vec<SwiftConstructor>,
     pub methods: Vec<SwiftMethod>,
+    pub streams: Vec<SwiftStream>,
     pub doc: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwiftStream {
+    pub name: String,
+    pub mode: SwiftStreamMode,
+    pub item_type: String,
+    pub item_decode_expr: String,
+    pub subscribe: String,
+    pub poll: String,
+    pub pop_batch: String,
+    pub wait: String,
+    pub unsubscribe: String,
+    pub free: String,
+    pub free_buf: String,
+    pub atomic_cas: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum SwiftStreamMode {
+    Async,
+    Batch { class_name: String, method_name_pascal: String },
+    Callback { class_name: String, method_name_pascal: String },
 }
 
 #[derive(Debug, Clone)]
