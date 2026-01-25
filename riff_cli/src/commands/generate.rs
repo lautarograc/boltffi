@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use riff_bindgen::{
-    CHeaderGenerator, FactoryStyle, JniGenerator, Kotlin, KotlinOptions, Swift, scan_crate,
+    CHeaderGenerator, FactoryStyle, JniGenerator, Kotlin, KotlinOptions, Swift, ir, render,
+    scan_crate,
 };
 
 use crate::config::{Config, FactoryStyle as ConfigFactoryStyle, KotlinApiStyle};
@@ -17,6 +18,7 @@ pub enum GenerateTarget {
 pub struct GenerateOptions {
     pub target: GenerateTarget,
     pub output: Option<PathBuf>,
+    pub use_ir: bool,
 }
 
 pub fn run_generate(config: &Config, target: GenerateTarget) -> Result<()> {
@@ -35,11 +37,16 @@ pub fn run_generate(config: &Config, target: GenerateTarget) -> Result<()> {
 
 pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Result<()> {
     match options.target {
+        GenerateTarget::Swift if options.use_ir => generate_swift_ir(config, options.output),
         GenerateTarget::Swift => generate_swift(config, options.output),
         GenerateTarget::Kotlin => generate_kotlin(config, options.output),
         GenerateTarget::Header => generate_header(config, options.output),
         GenerateTarget::All => {
-            generate_swift(config, options.output.clone())?;
+            if options.use_ir {
+                generate_swift_ir(config, options.output.clone())?;
+            } else {
+                generate_swift(config, options.output.clone())?;
+            }
             generate_kotlin(config, options.output.clone())?;
             generate_header(config, options.output)?;
             Ok(())
@@ -85,6 +92,46 @@ fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
     })?;
 
     println!("Generated: {}", output_path.display());
+    Ok(())
+}
+
+fn generate_swift_ir(config: &Config, output: Option<PathBuf>) -> Result<()> {
+    let output_dir = output.unwrap_or_else(|| config.apple_swift_output());
+    let library_name = config.library_name();
+    let capitalized = library_name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default()
+        + &library_name[1..];
+    let output_path = output_dir.join(format!("{}Riff.swift", capitalized));
+
+    std::fs::create_dir_all(&output_dir).map_err(|source| CliError::CreateDirectoryFailed {
+        path: output_dir.clone(),
+        source,
+    })?;
+
+    let crate_dir = std::env::current_dir()
+        .and_then(|p| p.canonicalize())
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let crate_name = config.library_name();
+
+    let mut module = scan_crate(&crate_dir, crate_name).map_err(|e| CliError::CommandFailed {
+        command: format!("scan_crate: {}", e),
+        status: None,
+    })?;
+
+    let contract = ir::build_contract(&mut module);
+    let lowered = ir::lower_contract(&contract);
+    let swift_module = render::swift::SwiftLowerer::new(&contract, &lowered).lower();
+    let swift_code = render::swift::SwiftEmitter::with_prefix(crate_name).emit(&swift_module);
+
+    std::fs::write(&output_path, &swift_code).map_err(|source| CliError::WriteFailed {
+        path: output_path.clone(),
+        source,
+    })?;
+
+    println!("Generated (IR): {}", output_path.display());
     Ok(())
 }
 

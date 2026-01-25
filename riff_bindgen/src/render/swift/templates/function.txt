@@ -1,0 +1,33 @@
+{{ func.signature() }} {
+{%- if func.is_async %}
+    fatalError("async functions not yet implemented in IR backend")
+{%- else %}
+{%- for param in func.params %}
+{%- if let Some(wrapper) = param.wrapper_code() %}
+    {{ wrapper }}
+{%- endif %}
+{%- endfor %}
+{%- if func.returns.is_void() %}
+    {{ func.ffi_symbol }}({{ func.ffi_args() }})
+{%- elif func.returns.is_wire_encoded() %}
+    let buf = {{ func.ffi_symbol }}({{ func.ffi_args() }})
+    defer { {{ prefix }}_free_buf_u8(buf) }
+    let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
+{%- if let Some(ret_type) = func.returns.swift_type() %}
+    return {{ ret_type }}.decode(wireBuffer: wire, at: 0).value
+{%- endif %}
+{%- elif func.returns.is_throws() %}
+    fatalError("throwing functions not yet implemented in IR backend")
+{%- elif let Some((class_name, nullable)) = func.returns.handle_info() %}
+{%- if nullable %}
+    guard let ptr = {{ func.ffi_symbol }}({{ func.ffi_args() }}) else { return nil }
+    return {{ class_name }}(handle: ptr)
+{%- else %}
+    let ptr = {{ func.ffi_symbol }}({{ func.ffi_args() }})!
+    return {{ class_name }}(handle: ptr)
+{%- endif %}
+{%- else %}
+    return {{ func.ffi_symbol }}({{ func.ffi_args() }})
+{%- endif %}
+{%- endif %}
+}

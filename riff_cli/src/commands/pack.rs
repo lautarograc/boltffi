@@ -159,6 +159,7 @@ fn pack_android(config: &Config, options: PackAndroidOptions) -> Result<()> {
                 GenerateOptions {
                     target: GenerateTarget::Kotlin,
                     output: Some(config.android_kotlin_output()),
+                    use_ir: false,
                 },
             )
         })?;
@@ -168,6 +169,7 @@ fn pack_android(config: &Config, options: PackAndroidOptions) -> Result<()> {
                 GenerateOptions {
                     target: GenerateTarget::Header,
                     output: Some(config.android_header_output()),
+                    use_ir: false,
                 },
             )
         })?;
@@ -256,6 +258,7 @@ fn generate_apple_bindings(config: &Config, layout: SpmLayout, package_root: &Pa
         GenerateOptions {
             target: GenerateTarget::Swift,
             output: Some(swift_output_dir),
+            use_ir: false,
         },
     )?;
 
@@ -264,6 +267,7 @@ fn generate_apple_bindings(config: &Config, layout: SpmLayout, package_root: &Pa
         GenerateOptions {
             target: GenerateTarget::Header,
             output: Some(config.apple_header_output()),
+            use_ir: false,
         },
     )?;
 

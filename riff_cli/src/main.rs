@@ -70,7 +70,7 @@ enum Commands {
 
     #[command(
         about = "Generate bindings (Swift/Kotlin/header)",
-        long_about = "Generate bindings.\n\nExamples:\n  riff generate\n  riff generate swift\n  riff generate kotlin\n  riff generate header\n"
+        long_about = "Generate bindings.\n\nExamples:\n  riff generate\n  riff generate swift\n  riff generate kotlin\n  riff generate header\n  riff generate swift --use-ir\n"
     )]
     Generate {
         #[arg(value_enum)]
@@ -82,6 +82,9 @@ enum Commands {
             help = "Override output directory (default comes from riff.toml)"
         )]
         output: Option<PathBuf>,
+
+        #[arg(long, help = "Use IR-based backend (experimental)")]
+        use_ir: bool,
     },
 
     #[command(
@@ -241,7 +244,11 @@ fn execute_command(command: Commands) -> Result<()> {
             run_doctor(options)
         }
 
-        Commands::Generate { target, output } => {
+        Commands::Generate {
+            target,
+            output,
+            use_ir,
+        } => {
             let config = load_config()?;
             let options = GenerateOptions {
                 target: target
@@ -253,6 +260,7 @@ fn execute_command(command: Commands) -> Result<()> {
                     })
                     .unwrap_or(GenerateTarget::All),
                 output,
+                use_ir,
             };
             run_generate_with_output(&config, options)
         }

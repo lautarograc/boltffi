@@ -1,0 +1,89 @@
+public final class {{ cls.name }} {
+    let handle: OpaquePointer
+
+    init(handle: OpaquePointer) {
+        self.handle = handle
+    }
+{%- for ctor in cls.constructors %}
+
+    public{% if ctor.name.is_some() %} convenience{% endif %} init({{ ctor.params_signature() }}){% if ctor.is_fallible %} throws{% endif %} {
+{%- for param in ctor.params %}
+{%- if let Some(wrapper) = param.wrapper_code() %}
+        {{ wrapper }}
+{%- endif %}
+{%- endfor %}
+{%- if ctor.is_fallible %}
+        guard let ptr = {{ ctor.ffi_symbol }}({{ ctor.ffi_args() }}) else {
+            throw FfiError(message: takeLastErrorMessage())
+        }
+{%- else %}
+        let ptr = {{ ctor.ffi_symbol }}({{ ctor.ffi_args() }})!
+{%- endif %}
+{%- if ctor.name.is_some() %}
+        self.init(handle: ptr)
+{%- else %}
+        self.handle = ptr
+{%- endif %}
+    }
+{%- endfor %}
+
+    deinit {
+        {{ cls.ffi_free }}(handle)
+    }
+{%- for method in cls.methods %}
+
+    {{ method.signature() }} {
+{%- if method.is_async %}
+        fatalError("async methods not yet implemented in IR backend")
+{%- else %}
+{%- for param in method.params %}
+{%- if let Some(wrapper) = param.wrapper_code() %}
+        {{ wrapper }}
+{%- endif %}
+{%- endfor %}
+{%- if method.returns.is_void() %}
+{%- if method.needs_handle() %}
+        {{ method.ffi_symbol }}({{ method.ffi_args_with_handle() }})
+{%- else %}
+        {{ method.ffi_symbol }}({{ method.ffi_args() }})
+{%- endif %}
+{%- elif method.returns.is_wire_encoded() %}
+{%- if method.needs_handle() %}
+        let buf = {{ method.ffi_symbol }}({{ method.ffi_args_with_handle() }})
+{%- else %}
+        let buf = {{ method.ffi_symbol }}({{ method.ffi_args() }})
+{%- endif %}
+        defer { {{ prefix }}_free_buf_u8(buf) }
+        let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
+{%- if let Some(ret_type) = method.returns.swift_type() %}
+        return {{ ret_type }}.decode(wireBuffer: wire, at: 0).value
+{%- endif %}
+{%- elif method.returns.is_throws() %}
+        fatalError("throwing methods not yet implemented in IR backend")
+{%- elif let Some((class_name, nullable)) = method.returns.handle_info() %}
+{%- if nullable %}
+{%- if method.needs_handle() %}
+        guard let ptr = {{ method.ffi_symbol }}({{ method.ffi_args_with_handle() }}) else { return nil }
+{%- else %}
+        guard let ptr = {{ method.ffi_symbol }}({{ method.ffi_args() }}) else { return nil }
+{%- endif %}
+        return {{ class_name }}(handle: ptr)
+{%- else %}
+{%- if method.needs_handle() %}
+        let ptr = {{ method.ffi_symbol }}({{ method.ffi_args_with_handle() }})!
+{%- else %}
+        let ptr = {{ method.ffi_symbol }}({{ method.ffi_args() }})!
+{%- endif %}
+        return {{ class_name }}(handle: ptr)
+{%- endif %}
+{%- else %}
+{%- if method.needs_handle() %}
+        return {{ method.ffi_symbol }}({{ method.ffi_args_with_handle() }})
+{%- else %}
+        return {{ method.ffi_symbol }}({{ method.ffi_args() }})
+{%- endif %}
+{%- endif %}
+{%- endif %}
+    }
+{%- endfor %}
+}
