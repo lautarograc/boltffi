@@ -235,7 +235,8 @@ impl Default for SwiftEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::codec::CodecPlan;
+    use crate::ir::codec::{CodecPlan, RecordLayout, VecLayout};
+    use crate::ir::ids::RecordId;
     use crate::ir::types::PrimitiveType;
     use crate::render::swift::plan::{
         SwiftAsyncResult, SwiftCallbackParam, SwiftStream, SwiftStreamMode,
@@ -560,8 +561,8 @@ mod tests {
                 swift_type: "Point".to_string(),
                 conversion: SwiftConversion::ToWireBuffer {
                     codec: CodecPlan::Record {
-                        id: crate::ir::ids::RecordId::new("Point"),
-                        layout: crate::ir::codec::RecordLayout::Blittable {
+                        id: RecordId::new("Point"),
+                        layout: RecordLayout::Blittable {
                             size: 16,
                             fields: vec![],
                         },
@@ -777,5 +778,287 @@ mod tests {
             doc: None,
         };
         insta::assert_snapshot!(render_class(&cls, "riff"));
+    }
+
+    #[test]
+    fn snapshot_class_with_fallible_constructor() {
+        let cls = SwiftClass {
+            name: "Connection".to_string(),
+            ffi_free: "riff_connection_free".to_string(),
+            constructors: vec![SwiftConstructor::Designated {
+                ffi_symbol: "riff_connection_open".to_string(),
+                params: vec![SwiftParam {
+                    label: None,
+                    name: "url".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                }],
+                is_fallible: true,
+                doc: None,
+            }],
+            methods: vec![],
+            streams: vec![],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_class(&cls, "riff"));
+    }
+
+    #[test]
+    fn snapshot_sync_function_with_multiple_string_params() {
+        let func = SwiftFunction {
+            name: "concat".to_string(),
+            mode: SwiftCallMode::Sync {
+                symbol: "riff_concat".to_string(),
+            },
+            params: vec![
+                SwiftParam {
+                    label: None,
+                    name: "a".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                },
+                SwiftParam {
+                    label: None,
+                    name: "b".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                },
+            ],
+            returns: SwiftReturn::FromWireBuffer {
+                swift_type: "String".to_string(),
+                codec: CodecPlan::String,
+            },
+            doc: None,
+        };
+        insta::assert_snapshot!(render_function(&func, "riff"));
+    }
+
+    #[test]
+    fn snapshot_class_with_static_method() {
+        let cls = SwiftClass {
+            name: "Logger".to_string(),
+            ffi_free: "riff_logger_free".to_string(),
+            constructors: vec![],
+            methods: vec![SwiftMethod {
+                name: "getDefault".to_string(),
+                mode: SwiftCallMode::Sync {
+                    symbol: "riff_logger_get_default".to_string(),
+                },
+                params: vec![],
+                returns: SwiftReturn::Handle {
+                    class_name: "Logger".to_string(),
+                    nullable: false,
+                },
+                is_static: true,
+                doc: None,
+            }],
+            streams: vec![],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_class(&cls, "riff"));
+    }
+
+    #[test]
+    fn snapshot_callback_with_async_method() {
+        let callback = SwiftCallback {
+            protocol_name: "AsyncHandler".to_string(),
+            wrapper_class: "AsyncHandlerWrapper".to_string(),
+            vtable_var: "asyncHandlerVtable".to_string(),
+            vtable_type: "AsyncHandlerVtable".to_string(),
+            bridge_name: "AsyncHandlerBridge".to_string(),
+            register_fn: "riff_register_async_handler".to_string(),
+            create_fn: "riff_create_async_handler".to_string(),
+            methods: vec![SwiftCallbackMethod {
+                swift_name: "onComplete".to_string(),
+                ffi_name: "on_complete".to_string(),
+                params: vec![SwiftCallbackParam {
+                    label: "result".to_string(),
+                    swift_type: "String".to_string(),
+                    call_arg: "result".to_string(),
+                    ffi_args: vec!["resultPtr".to_string(), "resultLen".to_string()],
+                    decode_prelude: Some(
+                        "let result = String(decoding: UnsafeBufferPointer(start: resultPtr, count: Int(resultLen)), as: UTF8.self)".to_string(),
+                    ),
+                }],
+                returns: SwiftReturn::Void,
+                is_async: true,
+                has_out_param: false,
+            }],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_callback(&callback));
+    }
+
+    #[test]
+    fn snapshot_record_with_optional_field() {
+        let record = SwiftRecord {
+            class_name: "UserProfile".to_string(),
+            fields: vec![
+                SwiftField {
+                    swift_name: "name".to_string(),
+                    swift_type: "String".to_string(),
+                    default_expr: None,
+                    codec: CodecPlan::String,
+                    c_offset: None,
+                },
+                SwiftField {
+                    swift_name: "bio".to_string(),
+                    swift_type: "String?".to_string(),
+                    default_expr: None,
+                    codec: CodecPlan::Option(Box::new(CodecPlan::String)),
+                    c_offset: None,
+                },
+            ],
+            is_blittable: false,
+            blittable_size: None,
+        };
+        insta::assert_snapshot!(render_record(&record));
+    }
+
+    #[test]
+    fn snapshot_record_with_array_field() {
+        let record = SwiftRecord {
+            class_name: "Team".to_string(),
+            fields: vec![
+                SwiftField {
+                    swift_name: "name".to_string(),
+                    swift_type: "String".to_string(),
+                    default_expr: None,
+                    codec: CodecPlan::String,
+                    c_offset: None,
+                },
+                SwiftField {
+                    swift_name: "members".to_string(),
+                    swift_type: "[String]".to_string(),
+                    default_expr: None,
+                    codec: CodecPlan::Vec {
+                        element: Box::new(CodecPlan::String),
+                        layout: VecLayout::Encoded,
+                    },
+                    c_offset: None,
+                },
+            ],
+            is_blittable: false,
+            blittable_size: None,
+        };
+        insta::assert_snapshot!(render_record(&record));
+    }
+
+    #[test]
+    fn snapshot_sync_function_returning_optional() {
+        let func = SwiftFunction {
+            name: "findUser".to_string(),
+            mode: SwiftCallMode::Sync {
+                symbol: "riff_find_user".to_string(),
+            },
+            params: vec![SwiftParam {
+                label: None,
+                name: "id".to_string(),
+                swift_type: "Int64".to_string(),
+                conversion: SwiftConversion::Direct,
+            }],
+            returns: SwiftReturn::FromWireBuffer {
+                swift_type: "String?".to_string(),
+                codec: CodecPlan::Option(Box::new(CodecPlan::String)),
+            },
+            doc: None,
+        };
+        insta::assert_snapshot!(render_function(&func, "riff"));
+    }
+
+    #[test]
+    fn snapshot_class_with_nullable_handle_return() {
+        let cls = SwiftClass {
+            name: "Cache".to_string(),
+            ffi_free: "riff_cache_free".to_string(),
+            constructors: vec![],
+            methods: vec![SwiftMethod {
+                name: "get".to_string(),
+                mode: SwiftCallMode::Sync {
+                    symbol: "riff_cache_get".to_string(),
+                },
+                params: vec![SwiftParam {
+                    label: None,
+                    name: "key".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                }],
+                returns: SwiftReturn::Handle {
+                    class_name: "CacheEntry".to_string(),
+                    nullable: true,
+                },
+                is_static: false,
+                doc: None,
+            }],
+            streams: vec![],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_class(&cls, "riff"));
+    }
+
+    #[test]
+    fn snapshot_enum_with_associated_optional() {
+        let e = SwiftEnum {
+            name: "SearchResult".to_string(),
+            variants: vec![
+                SwiftVariant {
+                    swift_name: "found".to_string(),
+                    discriminant: 0,
+                    payload: SwiftVariantPayload::Tuple(vec![SwiftField {
+                        swift_name: "0".to_string(),
+                        swift_type: "String".to_string(),
+                        default_expr: None,
+                        codec: CodecPlan::String,
+                        c_offset: None,
+                    }]),
+                },
+                SwiftVariant {
+                    swift_name: "notFound".to_string(),
+                    discriminant: 1,
+                    payload: SwiftVariantPayload::Unit,
+                },
+            ],
+            is_c_style: false,
+            is_error: false,
+            doc: None,
+        };
+        insta::assert_snapshot!(render_enum(&e));
+    }
+
+    #[test]
+    fn snapshot_async_function_with_multiple_params() {
+        let func = SwiftFunction {
+            name: "uploadFile".to_string(),
+            mode: SwiftCallMode::Async {
+                start: "riff_upload_file_start".to_string(),
+                poll: "riff_upload_file_poll".to_string(),
+                complete: "riff_upload_file_complete".to_string(),
+                cancel: "riff_upload_file_cancel".to_string(),
+                free: "riff_upload_file_free".to_string(),
+                result: Box::new(SwiftAsyncResult::Encoded {
+                    swift_type: "String".to_string(),
+                    ok_type: None,
+                    codec: CodecPlan::String,
+                    throws: false,
+                }),
+            },
+            params: vec![
+                SwiftParam {
+                    label: None,
+                    name: "path".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                },
+                SwiftParam {
+                    label: Some("to".to_string()),
+                    name: "destination".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                },
+            ],
+            returns: SwiftReturn::Void,
+            doc: None,
+        };
+        insta::assert_snapshot!(render_function(&func, "riff"));
     }
 }

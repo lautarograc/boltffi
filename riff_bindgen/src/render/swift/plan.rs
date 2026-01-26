@@ -454,6 +454,42 @@ impl SwiftMethod {
             SwiftCallMode::Async { .. } => String::new(),
         }
     }
+
+    pub fn closure_depth(&self) -> usize {
+        self.params
+            .iter()
+            .filter(|p| p.needs_closure_wrap())
+            .count()
+    }
+
+    pub fn method_body_indent(&self) -> String {
+        "    ".repeat(self.closure_depth() + 2)
+    }
+
+    pub fn sync_closure_opens(&self) -> Vec<String> {
+        let has_return = !self.returns.is_void();
+        self.params
+            .iter()
+            .filter_map(|p| p.closure_wrap_open())
+            .enumerate()
+            .map(|(i, open)| {
+                let indent = "    ".repeat(i + 2);
+                if has_return {
+                    format!("{}return {}", indent, open)
+                } else {
+                    format!("{}{}", indent, open)
+                }
+            })
+            .collect()
+    }
+
+    pub fn sync_closure_closes(&self) -> Vec<String> {
+        let depth = self.closure_depth();
+        (0..depth)
+            .rev()
+            .map(|i| format!("{}}}", "    ".repeat(i + 2)))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -577,6 +613,42 @@ impl SwiftFunction {
             SwiftCallMode::Sync { symbol } => ffi_call_expr(symbol, &[], &self.params),
             SwiftCallMode::Async { .. } => String::new(),
         }
+    }
+
+    pub fn closure_depth(&self) -> usize {
+        self.params
+            .iter()
+            .filter(|p| p.needs_closure_wrap())
+            .count()
+    }
+
+    pub fn body_indent(&self) -> String {
+        "    ".repeat(self.closure_depth() + 1)
+    }
+
+    pub fn sync_closure_opens(&self) -> Vec<String> {
+        let has_return = !self.returns.is_void();
+        self.params
+            .iter()
+            .filter_map(|p| p.closure_wrap_open())
+            .enumerate()
+            .map(|(i, open)| {
+                let indent = "    ".repeat(i + 1);
+                if has_return {
+                    format!("{}return {}", indent, open)
+                } else {
+                    format!("{}{}", indent, open)
+                }
+            })
+            .collect()
+    }
+
+    pub fn sync_closure_closes(&self) -> Vec<String> {
+        let depth = self.closure_depth();
+        (0..depth)
+            .rev()
+            .map(|i| format!("{}}}", "    ".repeat(i + 1)))
+            .collect()
     }
 }
 

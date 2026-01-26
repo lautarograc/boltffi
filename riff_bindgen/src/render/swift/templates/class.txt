@@ -172,57 +172,53 @@ public final class {{ cls.name }} {
         {{ wrapper }}
 {%- endif %}
 {%- endfor %}
-{%- for param in method.params %}
-{%- if let Some(open) = param.closure_wrap_open() %}
-        {% if !method.returns.is_void() %}return {% endif %}{{ open }}
-{%- endif %}
+{%- for open in method.sync_closure_opens() %}
+{{ open }}
 {%- endfor %}
 {%- if method.returns.is_void() %}
 {%- if method.needs_handle() %}
-        {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
+{{ method.method_body_indent() }}{{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
 {%- else %}
-        {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+{{ method.method_body_indent() }}{{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {%- elif method.returns.is_wire_encoded() %}
 {%- if method.needs_handle() %}
-        let buf = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
+{{ method.method_body_indent() }}let buf = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
 {%- else %}
-        let buf = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+{{ method.method_body_indent() }}let buf = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
-        defer { {{ prefix }}_free_buf_u8(buf) }
-        let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
+{{ method.method_body_indent() }}defer { {{ prefix }}_free_buf_u8(buf) }
+{{ method.method_body_indent() }}let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
 {%- if let Some(decode_expr) = method.returns.decode_expr() %}
-        return {{ decode_expr }}
+{{ method.method_body_indent() }}return {{ decode_expr }}
 {%- endif %}
 {%- elif method.returns.is_throws() %}
-        fatalError("throwing methods not yet implemented in IR backend")
+{{ method.method_body_indent() }}fatalError("throwing methods not yet implemented in IR backend")
 {%- elif let Some((class_name, nullable)) = method.returns.handle_info() %}
 {%- if nullable %}
 {%- if method.needs_handle() %}
-        guard let ptr = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %}) else { return nil }
+{{ method.method_body_indent() }}guard let ptr = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %}) else { return nil }
 {%- else %}
-        guard let ptr = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else { return nil }
+{{ method.method_body_indent() }}guard let ptr = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else { return nil }
 {%- endif %}
-        return {{ class_name }}(handle: ptr)
-{%- else %}
-{%- if method.needs_handle() %}
-        let ptr = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})!
-{%- else %}
-        let ptr = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
-{%- endif %}
-        return {{ class_name }}(handle: ptr)
-{%- endif %}
+{{ method.method_body_indent() }}return {{ class_name }}(handle: ptr)
 {%- else %}
 {%- if method.needs_handle() %}
-        return {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
+{{ method.method_body_indent() }}let ptr = {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})!
 {%- else %}
-        return {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+{{ method.method_body_indent() }}let ptr = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
+{%- endif %}
+{{ method.method_body_indent() }}return {{ class_name }}(handle: ptr)
+{%- endif %}
+{%- else %}
+{%- if method.needs_handle() %}
+{{ method.method_body_indent() }}return {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
+{%- else %}
+{{ method.method_body_indent() }}return {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {%- endif %}
-{%- for param in method.params %}
-{%- if let Some(close) = param.closure_wrap_close() %}
-        {{ close }}
-{%- endif %}
+{%- for close in method.sync_closure_closes() %}
+{{ close }}
 {%- endfor %}
 {%- endmatch %}
     }

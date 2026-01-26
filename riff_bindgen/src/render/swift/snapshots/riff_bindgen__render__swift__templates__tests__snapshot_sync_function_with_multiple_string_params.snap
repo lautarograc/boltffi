@@ -1,0 +1,14 @@
+---
+source: riff_bindgen/src/render/swift/templates.rs
+expression: "render_function(&func, \"riff\")"
+---
+public func concat(a: String, b: String) -> String {
+    return a.withCString { aPtr in
+        return b.withCString { bPtr in
+            let buf = riff_concat(UnsafeRawPointer(aPtr).assumingMemoryBound(to: UInt8.self), UInt(a.utf8.count), UnsafeRawPointer(bPtr).assumingMemoryBound(to: UInt8.self), UInt(b.utf8.count))
+            defer { riff_free_buf_u8(buf) }
+            let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
+            return wire.readString(at: 0).value
+        }
+    }
+}

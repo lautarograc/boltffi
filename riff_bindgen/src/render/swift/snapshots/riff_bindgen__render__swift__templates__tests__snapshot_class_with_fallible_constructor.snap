@@ -1,0 +1,23 @@
+---
+source: riff_bindgen/src/render/swift/templates.rs
+expression: "render_class(&cls, \"riff\")"
+---
+public final class Connection {
+    let handle: OpaquePointer
+
+    init(handle: OpaquePointer) {
+        self.handle = handle
+    }
+
+    public init(url: String) throws {
+        guard let ptr = url.withCString { urlPtr in riff_connection_open(UnsafeRawPointer(urlPtr).assumingMemoryBound(to: UInt8.self), UInt(url.utf8.count)) } else {
+            throw FfiError(message: takeLastErrorMessage())
+        }
+        self.handle = ptr
+    }
+
+    deinit {
+        riff_connection_free(handle)
+    }
+
+}

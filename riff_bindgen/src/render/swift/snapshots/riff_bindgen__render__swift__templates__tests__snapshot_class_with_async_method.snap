@@ -44,7 +44,7 @@ public final class HttpClient {
                                 } else {
                                     let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
                                     riff_free_buf_u8(buf)
-                                    continuation.resume(returning: wire.readBytesWithSize(at: 0).value)
+                                    continuation.resume(returning: wire.readDataWithSize(at: 0).value)
                                 }
                             case .finishWithoutContinuation:
                                 riff_free_buf_u8(buf)

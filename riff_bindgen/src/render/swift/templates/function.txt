@@ -111,37 +111,33 @@ public func {{ func.name }}({% for p in func.params %}{{ p.signature() }}{% if !
     {{ wrapper }}
 {%- endif %}
 {%- endfor %}
-{%- for param in func.params %}
-{%- if let Some(open) = param.closure_wrap_open() %}
-    {% if !func.returns.is_void() %}return {% endif %}{{ open }}
-{%- endif %}
+{%- for open in func.sync_closure_opens() %}
+{{ open }}
 {%- endfor %}
 {%- if func.returns.is_void() %}
-    {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+{{ func.body_indent() }}{{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- elif func.returns.is_wire_encoded() %}
-    let buf = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
-    defer { {{ prefix }}_free_buf_u8(buf) }
-    let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
+{{ func.body_indent() }}let buf = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+{{ func.body_indent() }}defer { {{ prefix }}_free_buf_u8(buf) }
+{{ func.body_indent() }}let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
 {%- if let Some(decode_expr) = func.returns.decode_expr() %}
-    return {{ decode_expr }}
+{{ func.body_indent() }}return {{ decode_expr }}
 {%- endif %}
 {%- elif func.returns.is_throws() %}
-    fatalError("throwing functions not yet implemented in IR backend")
+{{ func.body_indent() }}fatalError("throwing functions not yet implemented in IR backend")
 {%- elif let Some((class_name, nullable)) = func.returns.handle_info() %}
 {%- if nullable %}
-    guard let ptr = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else { return nil }
-    return {{ class_name }}(handle: ptr)
+{{ func.body_indent() }}guard let ptr = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else { return nil }
+{{ func.body_indent() }}return {{ class_name }}(handle: ptr)
 {%- else %}
-    let ptr = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
-    return {{ class_name }}(handle: ptr)
+{{ func.body_indent() }}let ptr = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
+{{ func.body_indent() }}return {{ class_name }}(handle: ptr)
 {%- endif %}
 {%- else %}
-    return {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+{{ func.body_indent() }}return {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
-{%- for param in func.params %}
-{%- if let Some(close) = param.closure_wrap_close() %}
-    {{ close }}
-{%- endif %}
+{%- for close in func.sync_closure_closes() %}
+{{ close }}
 {%- endfor %}
 {%- endmatch %}
 }

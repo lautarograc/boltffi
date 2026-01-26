@@ -208,7 +208,7 @@ fn decode_expr(codec: &CodecPlan) -> (String, DecodeReturn) {
             DecodeReturn::WithSize,
         ),
         CodecPlan::Bytes => (
-            format!("wire.readBytesWithSize(at: {})", OFFSET_VAR),
+            format!("wire.readDataWithSize(at: {})", OFFSET_VAR),
             DecodeReturn::WithSize,
         ),
         CodecPlan::Builtin(id) => decode_builtin(id.as_str()),
@@ -338,7 +338,7 @@ fn decode_enum(name: &str, layout: &EnumLayout) -> (String, DecodeReturn) {
 fn decode_vec(element: &CodecPlan, layout: &VecLayout) -> (String, DecodeReturn) {
     if matches!(element, CodecPlan::Primitive(PrimitiveType::U8)) {
         return (
-            format!("wire.readBytesWithSize(at: {})", OFFSET_VAR),
+            format!("wire.readDataWithSize(at: {})", OFFSET_VAR),
             DecodeReturn::WithSize,
         );
     }
