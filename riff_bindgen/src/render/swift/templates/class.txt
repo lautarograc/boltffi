@@ -14,11 +14,11 @@ public final class {{ cls.name }} {
 {%- endif %}
 {%- endfor %}
 {%- if ctor.is_fallible() %}
-        guard let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else {
+        guard let ptr = {% for w in ctor.closure_wrappers() %}{{ w }} {% endfor %}{{ ctor.call_expr() }}{% for _ in ctor.closure_wrappers() %} }{% endfor %} else {
             throw FfiError(message: takeLastErrorMessage())
         }
 {%- else %}
-        let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
+        let ptr = {% for w in ctor.closure_wrappers() %}{{ w }} {% endfor %}{{ ctor.call_expr() }}{% for _ in ctor.closure_wrappers() %} }{% endfor %}!
 {%- endif %}
         self.handle = ptr
     }
@@ -43,11 +43,11 @@ public final class {{ cls.name }} {
 {%- endif %}
 {%- endfor %}
 {%- if ctor.is_fallible() %}
-        guard let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else {
+        guard let ptr = {% for w in ctor.closure_wrappers() %}{{ w }} {% endfor %}{{ ctor.call_expr() }}{% for _ in ctor.closure_wrappers() %} }{% endfor %} else {
             throw FfiError(message: takeLastErrorMessage())
         }
 {%- else %}
-        let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
+        let ptr = {% for w in ctor.closure_wrappers() %}{{ w }} {% endfor %}{{ ctor.call_expr() }}{% for _ in ctor.closure_wrappers() %} }{% endfor %}!
 {%- endif %}
         self.init(handle: ptr)
     }
@@ -67,11 +67,7 @@ public final class {{ cls.name }} {
         {{ wrapper }}
 {%- endif %}
 {%- endfor %}
-{%- if method.needs_handle() %}
-        let futureHandle = {{ start }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
-{%- else %}
-        let futureHandle = {{ start }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
-{%- endif %}
+        let futureHandle = {% for w in method.closure_wrappers() %}{{ w }} {% endfor %}{{ method.start_call_expr() }}{% for _ in method.closure_wrappers() %} }{% endfor %}
 
         typealias FutureContext = FfiFutureState<{{ result.future_type() }}>
         let state = FutureContext(handle: futureHandle)

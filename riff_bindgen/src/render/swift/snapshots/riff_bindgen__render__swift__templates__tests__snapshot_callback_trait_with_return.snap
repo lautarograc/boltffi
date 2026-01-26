@@ -1,0 +1,52 @@
+---
+source: riff_bindgen/src/render/swift/templates.rs
+expression: render_callback(&callback)
+---
+public protocol Validator: AnyObject {
+    func validate(input: String) -> Bool
+}
+
+private class ValidatorWrapper {
+    let impl_: Validator
+    init(_ impl_: Validator) { self.impl_ = impl_ }
+}
+
+private var validatorVtable: ValidatorVtable = {
+    ValidatorVtable(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<ValidatorWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<ValidatorWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        },
+        validate: { handle, inputPtr, inputLen, outPtr, statusPtr in
+            guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
+            let wrapper = Unmanaged<ValidatorWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            let input = String(decoding: UnsafeBufferPointer(start: inputPtr, count: Int(inputLen)), as: UTF8.self)
+            let result = wrapper.impl_.validate(input: input)
+            outPtr?.pointee = result
+            statusPtr?.pointee = FfiStatus(code: 0)
+        }
+    )
+}()
+
+enum ValidatorBridge {
+    private static var isRegistered = false
+
+    static func register() {
+        guard !isRegistered else { return }
+        riff_register_validator(&validatorVtable)
+        isRegistered = true
+    }
+
+    static func create(_ impl: Validator) -> RiffCallbackHandle {
+        register()
+        let wrapper = ValidatorWrapper(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return riff_create_validator(handle)
+    }
+}

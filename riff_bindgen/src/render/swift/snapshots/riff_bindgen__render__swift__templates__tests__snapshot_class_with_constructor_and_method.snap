@@ -1,0 +1,30 @@
+---
+source: riff_bindgen/src/render/swift/templates.rs
+expression: "render_class(&cls, \"riff\")"
+---
+public final class Database {
+    let handle: OpaquePointer
+
+    init(handle: OpaquePointer) {
+        self.handle = handle
+    }
+
+    public init(path: String) {
+        let ptr = path.withCString { pathPtr in riff_database_open(UnsafeRawPointer(pathPtr).assumingMemoryBound(to: UInt8.self), UInt(path.utf8.count)) }!
+        self.handle = ptr
+    }
+
+    deinit {
+        riff_database_free(handle)
+    }
+
+    public func query(sql: String) -> String {
+        return sql.withCString { sqlPtr in
+        let buf = riff_database_query(handle, UnsafeRawPointer(sqlPtr).assumingMemoryBound(to: UInt8.self), UInt(sql.utf8.count))
+        defer { riff_free_buf_u8(buf) }
+        let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
+        return wire.readString(at: 0).value
+        }
+    }
+
+}

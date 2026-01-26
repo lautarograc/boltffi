@@ -12,7 +12,7 @@ pub enum SwiftCallMode {
         complete: String,
         cancel: String,
         free: String,
-        result: SwiftAsyncResult,
+        result: Box<SwiftAsyncResult>,
     },
 }
 
@@ -388,6 +388,18 @@ impl SwiftConstructor {
     pub fn has_wrappers(&self) -> bool {
         self.params().iter().any(|p| p.needs_wrapper())
     }
+
+    pub fn needs_closure_wrap(&self) -> bool {
+        self.params().iter().any(|p| p.needs_closure_wrap())
+    }
+
+    pub fn closure_wrappers(&self) -> Vec<String> {
+        closure_wrappers(self.params())
+    }
+
+    pub fn call_expr(&self) -> String {
+        ffi_call_expr(self.ffi_symbol(), &[], self.params())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -407,6 +419,40 @@ impl SwiftMethod {
 
     pub fn is_async(&self) -> bool {
         self.mode.is_async()
+    }
+
+    pub fn needs_closure_wrap(&self) -> bool {
+        self.params.iter().any(|p| p.needs_closure_wrap())
+    }
+
+    pub fn closure_wrappers(&self) -> Vec<String> {
+        closure_wrappers(&self.params)
+    }
+
+    fn prefix_args(&self) -> Vec<&str> {
+        if self.needs_handle() {
+            vec!["handle"]
+        } else {
+            vec![]
+        }
+    }
+
+    pub fn start_call_expr(&self) -> String {
+        match &self.mode {
+            SwiftCallMode::Async { start, .. } => {
+                ffi_call_expr(start, &self.prefix_args(), &self.params)
+            }
+            SwiftCallMode::Sync { .. } => String::new(),
+        }
+    }
+
+    pub fn sync_call_expr(&self) -> String {
+        match &self.mode {
+            SwiftCallMode::Sync { symbol } => {
+                ffi_call_expr(symbol, &self.prefix_args(), &self.params)
+            }
+            SwiftCallMode::Async { .. } => String::new(),
+        }
     }
 }
 
@@ -491,9 +537,46 @@ pub struct SwiftFunction {
     pub doc: Option<String>,
 }
 
+pub fn ffi_call_expr(symbol: &str, prefix_args: &[&str], params: &[SwiftParam]) -> String {
+    let args = prefix_args
+        .iter()
+        .map(|s| s.to_string())
+        .chain(params.iter().map(|p| p.ffi_arg()));
+    format!("{}({})", symbol, args.collect::<Vec<_>>().join(", "))
+}
+
+pub fn closure_wrappers(params: &[SwiftParam]) -> Vec<String> {
+    params
+        .iter()
+        .filter_map(|p| p.closure_wrap_open())
+        .collect()
+}
+
 impl SwiftFunction {
     pub fn is_async(&self) -> bool {
         self.mode.is_async()
+    }
+
+    pub fn needs_closure_wrap(&self) -> bool {
+        self.params.iter().any(|p| p.needs_closure_wrap())
+    }
+
+    pub fn closure_wrappers(&self) -> Vec<String> {
+        closure_wrappers(&self.params)
+    }
+
+    pub fn start_call_expr(&self) -> String {
+        match &self.mode {
+            SwiftCallMode::Async { start, .. } => ffi_call_expr(start, &[], &self.params),
+            SwiftCallMode::Sync { .. } => String::new(),
+        }
+    }
+
+    pub fn sync_call_expr(&self) -> String {
+        match &self.mode {
+            SwiftCallMode::Sync { symbol } => ffi_call_expr(symbol, &[], &self.params),
+            SwiftCallMode::Async { .. } => String::new(),
+        }
     }
 }
 

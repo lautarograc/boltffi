@@ -1022,7 +1022,7 @@ impl<'a> SwiftLowerer<'a> {
                 complete: async_call.complete.as_str().to_string(),
                 cancel: async_call.cancel.as_str().to_string(),
                 free: async_call.free.as_str().to_string(),
-                result: self.lower_async_result(&async_call.result, &async_call.error),
+                result: Box::new(self.lower_async_result(&async_call.result, &async_call.error)),
             },
         }
     }

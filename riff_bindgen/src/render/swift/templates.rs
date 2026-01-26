@@ -237,7 +237,13 @@ mod tests {
     use super::*;
     use crate::ir::codec::CodecPlan;
     use crate::ir::types::PrimitiveType;
-    use crate::render::swift::SwiftVariantPayload;
+    use crate::render::swift::plan::{
+        SwiftAsyncResult, SwiftCallbackParam, SwiftStream, SwiftStreamMode,
+    };
+    use crate::render::swift::{
+        SwiftCallback, SwiftCallbackMethod, SwiftClass, SwiftConstructor, SwiftConversion,
+        SwiftFunction, SwiftMethod, SwiftParam, SwiftReturn, SwiftVariantPayload,
+    };
 
     #[test]
     fn snapshot_blittable_point() {
@@ -488,5 +494,288 @@ mod tests {
             doc: None,
         };
         insta::assert_snapshot!(render_enum(&e));
+    }
+
+    #[test]
+    fn snapshot_sync_function_returning_primitive() {
+        let func = SwiftFunction {
+            name: "add".to_string(),
+            mode: SwiftCallMode::Sync {
+                symbol: "riff_add".to_string(),
+            },
+            params: vec![
+                SwiftParam {
+                    label: None,
+                    name: "a".to_string(),
+                    swift_type: "Int32".to_string(),
+                    conversion: SwiftConversion::Direct,
+                },
+                SwiftParam {
+                    label: None,
+                    name: "b".to_string(),
+                    swift_type: "Int32".to_string(),
+                    conversion: SwiftConversion::Direct,
+                },
+            ],
+            returns: SwiftReturn::Direct {
+                swift_type: "Int32".to_string(),
+            },
+            doc: None,
+        };
+        insta::assert_snapshot!(render_function(&func, "riff"));
+    }
+
+    #[test]
+    fn snapshot_sync_function_with_string_param() {
+        let func = SwiftFunction {
+            name: "greet".to_string(),
+            mode: SwiftCallMode::Sync {
+                symbol: "riff_greet".to_string(),
+            },
+            params: vec![SwiftParam {
+                label: None,
+                name: "name".to_string(),
+                swift_type: "String".to_string(),
+                conversion: SwiftConversion::ToString,
+            }],
+            returns: SwiftReturn::FromWireBuffer {
+                swift_type: "String".to_string(),
+                codec: CodecPlan::String,
+            },
+            doc: None,
+        };
+        insta::assert_snapshot!(render_function(&func, "riff"));
+    }
+
+    #[test]
+    fn snapshot_sync_function_with_record_param() {
+        let func = SwiftFunction {
+            name: "processPoint".to_string(),
+            mode: SwiftCallMode::Sync {
+                symbol: "riff_process_point".to_string(),
+            },
+            params: vec![SwiftParam {
+                label: None,
+                name: "point".to_string(),
+                swift_type: "Point".to_string(),
+                conversion: SwiftConversion::ToWireBuffer {
+                    codec: CodecPlan::Record {
+                        id: crate::ir::ids::RecordId::new("Point"),
+                        layout: crate::ir::codec::RecordLayout::Blittable {
+                            size: 16,
+                            fields: vec![],
+                        },
+                    },
+                },
+            }],
+            returns: SwiftReturn::FromWireBuffer {
+                swift_type: "Point".to_string(),
+                codec: CodecPlan::Record {
+                    id: crate::ir::ids::RecordId::new("Point"),
+                    layout: crate::ir::codec::RecordLayout::Blittable {
+                        size: 16,
+                        fields: vec![],
+                    },
+                },
+            },
+            doc: None,
+        };
+        insta::assert_snapshot!(render_function(&func, "riff"));
+    }
+
+    #[test]
+    fn snapshot_async_function_returning_string() {
+        let func = SwiftFunction {
+            name: "fetchData".to_string(),
+            mode: SwiftCallMode::Async {
+                start: "riff_fetch_data_start".to_string(),
+                poll: "riff_fetch_data_poll".to_string(),
+                complete: "riff_fetch_data_complete".to_string(),
+                cancel: "riff_fetch_data_cancel".to_string(),
+                free: "riff_fetch_data_free".to_string(),
+                result: Box::new(SwiftAsyncResult::Encoded {
+                    swift_type: "String".to_string(),
+                    ok_type: None,
+                    codec: CodecPlan::String,
+                    throws: false,
+                }),
+            },
+            params: vec![SwiftParam {
+                label: None,
+                name: "url".to_string(),
+                swift_type: "String".to_string(),
+                conversion: SwiftConversion::ToString,
+            }],
+            returns: SwiftReturn::Void,
+            doc: None,
+        };
+        insta::assert_snapshot!(render_function(&func, "riff"));
+    }
+
+    #[test]
+    fn snapshot_callback_trait_simple() {
+        let callback = SwiftCallback {
+            protocol_name: "DataHandler".to_string(),
+            wrapper_class: "DataHandlerWrapper".to_string(),
+            vtable_var: "dataHandlerVtable".to_string(),
+            vtable_type: "DataHandlerVtable".to_string(),
+            bridge_name: "DataHandlerBridge".to_string(),
+            register_fn: "riff_register_data_handler".to_string(),
+            create_fn: "riff_create_data_handler".to_string(),
+            methods: vec![SwiftCallbackMethod {
+                swift_name: "onData".to_string(),
+                ffi_name: "on_data".to_string(),
+                params: vec![SwiftCallbackParam {
+                    label: "data".to_string(),
+                    swift_type: "Data".to_string(),
+                    call_arg: "data".to_string(),
+                    ffi_args: vec!["dataPtr".to_string(), "dataLen".to_string()],
+                    decode_prelude: Some(
+                        "let data = Data(bytes: dataPtr!, count: Int(dataLen))".to_string(),
+                    ),
+                }],
+                returns: SwiftReturn::Void,
+                is_async: false,
+                has_out_param: false,
+            }],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_callback(&callback));
+    }
+
+    #[test]
+    fn snapshot_callback_trait_with_return() {
+        let callback = SwiftCallback {
+            protocol_name: "Validator".to_string(),
+            wrapper_class: "ValidatorWrapper".to_string(),
+            vtable_var: "validatorVtable".to_string(),
+            vtable_type: "ValidatorVtable".to_string(),
+            bridge_name: "ValidatorBridge".to_string(),
+            register_fn: "riff_register_validator".to_string(),
+            create_fn: "riff_create_validator".to_string(),
+            methods: vec![SwiftCallbackMethod {
+                swift_name: "validate".to_string(),
+                ffi_name: "validate".to_string(),
+                params: vec![SwiftCallbackParam {
+                    label: "input".to_string(),
+                    swift_type: "String".to_string(),
+                    call_arg: "input".to_string(),
+                    ffi_args: vec!["inputPtr".to_string(), "inputLen".to_string()],
+                    decode_prelude: Some(
+                        "let input = String(decoding: UnsafeBufferPointer(start: inputPtr, count: Int(inputLen)), as: UTF8.self)".to_string(),
+                    ),
+                }],
+                returns: SwiftReturn::Direct {
+                    swift_type: "Bool".to_string(),
+                },
+                is_async: false,
+                has_out_param: true,
+            }],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_callback(&callback));
+    }
+
+    #[test]
+    fn snapshot_class_with_constructor_and_method() {
+        let cls = SwiftClass {
+            name: "Database".to_string(),
+            ffi_free: "riff_database_free".to_string(),
+            constructors: vec![SwiftConstructor::Designated {
+                ffi_symbol: "riff_database_open".to_string(),
+                params: vec![SwiftParam {
+                    label: None,
+                    name: "path".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                }],
+                is_fallible: false,
+                doc: None,
+            }],
+            methods: vec![SwiftMethod {
+                name: "query".to_string(),
+                mode: SwiftCallMode::Sync {
+                    symbol: "riff_database_query".to_string(),
+                },
+                params: vec![SwiftParam {
+                    label: None,
+                    name: "sql".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                }],
+                returns: SwiftReturn::FromWireBuffer {
+                    swift_type: "String".to_string(),
+                    codec: CodecPlan::String,
+                },
+                is_static: false,
+                doc: None,
+            }],
+            streams: vec![],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_class(&cls, "riff"));
+    }
+
+    #[test]
+    fn snapshot_class_with_stream() {
+        let cls = SwiftClass {
+            name: "EventSource".to_string(),
+            ffi_free: "riff_event_source_free".to_string(),
+            constructors: vec![],
+            methods: vec![],
+            streams: vec![SwiftStream {
+                name: "events".to_string(),
+                mode: SwiftStreamMode::Async,
+                item_type: "String".to_string(),
+                item_decode_expr: "wire.readString(at: 0).value".to_string(),
+                subscribe: "riff_event_source_events_subscribe".to_string(),
+                poll: "riff_event_source_events_poll".to_string(),
+                pop_batch: "riff_event_source_events_pop_batch".to_string(),
+                wait: "riff_event_source_events_wait".to_string(),
+                unsubscribe: "riff_event_source_events_unsubscribe".to_string(),
+                free: "riff_event_source_events_free".to_string(),
+                free_buf: "riff_free_buf_u8".to_string(),
+                atomic_cas: "riff_atomic_u8_cas".to_string(),
+            }],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_class(&cls, "riff"));
+    }
+
+    #[test]
+    fn snapshot_class_with_async_method() {
+        let cls = SwiftClass {
+            name: "HttpClient".to_string(),
+            ffi_free: "riff_http_client_free".to_string(),
+            constructors: vec![],
+            methods: vec![SwiftMethod {
+                name: "fetch".to_string(),
+                mode: SwiftCallMode::Async {
+                    start: "riff_http_client_fetch_start".to_string(),
+                    poll: "riff_http_client_fetch_poll".to_string(),
+                    complete: "riff_http_client_fetch_complete".to_string(),
+                    cancel: "riff_http_client_fetch_cancel".to_string(),
+                    free: "riff_http_client_fetch_free".to_string(),
+                    result: Box::new(SwiftAsyncResult::Encoded {
+                        swift_type: "Data".to_string(),
+                        ok_type: None,
+                        codec: CodecPlan::Bytes,
+                        throws: false,
+                    }),
+                },
+                params: vec![SwiftParam {
+                    label: None,
+                    name: "url".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                }],
+                returns: SwiftReturn::Void,
+                is_static: false,
+                doc: None,
+            }],
+            streams: vec![],
+            doc: None,
+        };
+        insta::assert_snapshot!(render_class(&cls, "riff"));
     }
 }

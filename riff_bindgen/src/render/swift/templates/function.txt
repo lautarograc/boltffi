@@ -6,7 +6,7 @@ public func {{ func.name }}({% for p in func.params %}{{ p.signature() }}{% if !
     {{ wrapper }}
 {%- endif %}
 {%- endfor %}
-    let futureHandle = {{ start }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
+    let futureHandle = {% for w in func.closure_wrappers() %}{{ w }} {% endfor %}{{ func.start_call_expr() }}{% for _ in func.closure_wrappers() %} }{% endfor %}
 
     typealias FutureContext = FfiFutureState<{{ result.future_type() }}>
     let state = FutureContext(handle: futureHandle)
