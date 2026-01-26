@@ -7,22 +7,26 @@ use std::collections::HashMap;
 
 use crate::ir::AbiContract;
 use crate::ir::abi::{
-    AbiCall, AbiParam, AbiStream, AsyncResultTransport, CallId, CallMode, ErrorTransport,
-    ParamRole, ReturnTransport, StreamItemTransport,
+    AbiCall, AbiCallbackInvocation, AbiParam, AbiStream, AsyncResultTransport, CallId, CallMode,
+    ErrorTransport, ParamRole, ReturnTransport, StreamItemTransport,
 };
-use crate::ir::codec::{CodecPlan, EnumLayout, RecordLayout, VariantPayloadLayout};
+use crate::ir::plan::{CallbackStyle, Mutability};
+use crate::ir::codec::{CodecPlan, EnumLayout, RecordLayout, VariantPayloadLayout, VecLayout};
 use crate::ir::contract::FfiContract;
-use crate::ir::definitions::{EnumRepr, ParamDef, Receiver, ReturnDef, StreamMode};
+use crate::ir::definitions::{
+    CallbackKind, ConstructorDef, EnumRepr, ParamDef, Receiver, ReturnDef, StreamMode,
+};
 use crate::ir::ids::{CallbackId, ClassId, EnumId, ParamName, RecordId};
 use crate::ir::plan::AbiType;
-use crate::ir::types::TypeExpr;
+use crate::ir::types::{PrimitiveType, TypeExpr};
 
 use super::codec;
 use super::plan::{
-    SwiftAsyncConversion, SwiftAsyncResult, SwiftCallback, SwiftCallbackMethod,
-    SwiftCallbackParam, SwiftCallMode, SwiftClass, SwiftConstructor, SwiftConversion, SwiftEnum,
-    SwiftField, SwiftFunction, SwiftMethod, SwiftModule, SwiftParam, SwiftRecord, SwiftReturn,
-    SwiftStream, SwiftStreamMode, SwiftVariant, SwiftVariantPayload,
+    SwiftAsyncConversion, SwiftAsyncResult, SwiftCallback, SwiftCallbackMethod, SwiftCallbackParam,
+    SwiftCallMode, SwiftClass, SwiftClosureTrampoline, SwiftClosureTrampolineParam,
+    SwiftConstructor, SwiftConversion, SwiftEnum, SwiftField, SwiftFunction, SwiftMethod,
+    SwiftModule, SwiftParam, SwiftRecord, SwiftReturn, SwiftStream, SwiftStreamMode, SwiftVariant,
+    SwiftVariantPayload,
 };
 
 struct AbiIndex {
@@ -76,7 +80,7 @@ impl AbiIndex {
         &self,
         contract: &'a AbiContract,
         id: &CallbackId,
-    ) -> &'a crate::ir::abi::AbiCallbackInvocation {
+    ) -> &'a AbiCallbackInvocation {
         let index = self.callbacks.get(id).expect("abi callback should exist");
         &contract.callbacks[*index]
     }
@@ -276,16 +280,52 @@ impl<'a> SwiftLowerer<'a> {
                             index: idx,
                         });
 
-                        SwiftConstructor {
-                            name: ctor.name.as_ref().map(|n| camel_case(n.as_str())),
-                            ffi_symbol: call.symbol.as_str().to_string(),
-                            params: ctor
-                                .params
-                                .iter()
-                                .map(|p| self.lower_param(p, call))
-                                .collect(),
-                            is_fallible: ctor.is_fallible,
-                            doc: ctor.doc.clone(),
+                        match ctor {
+                            ConstructorDef::Default {
+                                is_fallible, doc, ..
+                            } => SwiftConstructor::Designated {
+                                ffi_symbol: call.symbol.as_str().to_string(),
+                                params: ctor
+                                    .params()
+                                    .into_iter()
+                                    .map(|p| self.lower_param(p, call))
+                                    .collect(),
+                                is_fallible: *is_fallible,
+                                doc: doc.clone(),
+                            },
+                            ConstructorDef::NamedFactory {
+                                name,
+                                is_fallible,
+                                doc,
+                                ..
+                            } => SwiftConstructor::Factory {
+                                name: camel_case(name.as_str()),
+                                ffi_symbol: call.symbol.as_str().to_string(),
+                                is_fallible: *is_fallible,
+                                doc: doc.clone(),
+                            },
+                            ConstructorDef::NamedInit {
+                                name,
+                                first_param,
+                                rest_params,
+                                is_fallible,
+                                doc,
+                                ..
+                            } => {
+                                let label = camel_case(name.as_str());
+                                let mut first = self.lower_param(first_param, call);
+                                first.label = Some(label.clone());
+                                let rest = rest_params
+                                    .iter()
+                                    .map(|p| self.lower_param(p, call));
+                                SwiftConstructor::Convenience {
+                                    name: label,
+                                    ffi_symbol: call.symbol.as_str().to_string(),
+                                    params: std::iter::once(first).chain(rest).collect(),
+                                    is_fallible: *is_fallible,
+                                    doc: doc.clone(),
+                                }
+                            }
                         }
                     })
                     .collect();
@@ -386,6 +426,7 @@ impl<'a> SwiftLowerer<'a> {
         self.contract
             .catalog
             .all_callbacks()
+            .filter(|def| def.kind == CallbackKind::Trait)
             .map(|def| {
                 let protocol_name = pascal_case(def.id.as_str());
                 let vtable_var = format!("{}VTableInstance", lower_first_char(&protocol_name));
@@ -512,16 +553,23 @@ impl<'a> SwiftLowerer<'a> {
 
         let (swift_type, conversion) = match &abi_param.role {
             ParamRole::InDirect => (self.swift_type(&param.type_expr), SwiftConversion::Direct),
-            ParamRole::InBuffer { element_abi, .. } => {
-                if *element_abi == AbiType::U8 {
+            ParamRole::InBuffer { element_abi, mutability, .. } => {
+                let element_type = self.abi_to_swift(*element_abi);
+                if *element_abi == AbiType::U8 && *mutability == Mutability::Shared {
                     ("Data".to_string(), SwiftConversion::ToData)
                 } else {
-                    (
-                        format!("[{}]", self.abi_to_swift(*element_abi)),
-                        SwiftConversion::Direct,
-                    )
+                    let conversion = match mutability {
+                        Mutability::Mutable => SwiftConversion::MutableBuffer {
+                            element_type: element_type.clone(),
+                        },
+                        Mutability::Shared => SwiftConversion::PrimitiveBuffer {
+                            element_type: element_type.clone(),
+                        },
+                    };
+                    (format!("[{}]", element_type), conversion)
                 }
             }
+            ParamRole::InString { .. } => ("String".to_string(), SwiftConversion::ToString),
             ParamRole::InEncoded { codec, .. } => (
                 codec::swift_type(codec),
                 SwiftConversion::ToWireBuffer { codec: codec.clone() },
@@ -541,19 +589,41 @@ impl<'a> SwiftLowerer<'a> {
                     },
                 )
             }
-            ParamRole::InCallback { callback_id, nullable, .. } => {
-                let protocol = pascal_case(callback_id.as_str());
-                let swift_type = if *nullable {
-                    format!("(any {})?", protocol)
-                } else {
-                    format!("any {}", protocol)
+            ParamRole::InCallback { callback_id, nullable, style } => {
+                match style {
+                    CallbackStyle::BoxedDyn => {
+                        let protocol = pascal_case(callback_id.as_str());
+                        let swift_type = if *nullable {
+                            format!("(any {})?", protocol)
+                        } else {
+                            format!("any {}", protocol)
+                        };
+                        (
+                            swift_type,
+                            SwiftConversion::WrapCallback { protocol },
+                        )
+                    }
+                    CallbackStyle::ImplTrait => {
+                        let closure_plan = self.build_closure_trampoline(callback_id, &swift_name);
+                        let swift_type = format!("@escaping {}", closure_plan.swift_type);
+                        (
+                            swift_type,
+                            SwiftConversion::InlineClosure { closure: closure_plan },
+                        )
+                    }
+                }
+            }
+            ParamRole::OutBuffer { codec, .. } => {
+                let element_type = match codec {
+                    CodecPlan::Vec { element, .. } => codec::swift_type(element),
+                    _ => codec::swift_type(codec),
                 };
                 (
-                    swift_type,
-                    SwiftConversion::WrapCallback { protocol: protocol.clone() },
+                    format!("[{}]", element_type),
+                    SwiftConversion::MutableBuffer { element_type },
                 )
             }
-            _ => panic!("unsupported ABI param role for Swift param"),
+            _ => panic!("unsupported ABI param role for Swift param: {:?}", abi_param.role),
         };
 
         SwiftParam {
@@ -573,7 +643,9 @@ impl<'a> SwiftLowerer<'a> {
                         param.role,
                         ParamRole::InDirect
                             | ParamRole::InBuffer { .. }
+                            | ParamRole::InString { .. }
                             | ParamRole::InEncoded { .. }
+                            | ParamRole::OutBuffer { .. }
                             | ParamRole::InHandle { .. }
                             | ParamRole::InCallback { .. }
                     )
@@ -735,11 +807,11 @@ impl<'a> SwiftLowerer<'a> {
         }
     }
 
-    fn vec_layout(&self, element: &TypeExpr) -> crate::ir::codec::VecLayout {
+    fn vec_layout(&self, element: &TypeExpr) -> VecLayout {
         match element {
             TypeExpr::Primitive(p) => match p.size_bytes() {
-                Some(size) => crate::ir::codec::VecLayout::Blittable { element_size: size },
-                None => crate::ir::codec::VecLayout::Encoded,
+                Some(size) => VecLayout::Blittable { element_size: size },
+                None => VecLayout::Encoded,
             },
             TypeExpr::Record(id) => {
                 let codec = self.abi_index.record_codec(self.abi, id);
@@ -747,11 +819,126 @@ impl<'a> SwiftLowerer<'a> {
                     CodecPlan::Record {
                         layout: RecordLayout::Blittable { size, .. },
                         ..
-                    } => crate::ir::codec::VecLayout::Blittable { element_size: *size },
-                    _ => crate::ir::codec::VecLayout::Encoded,
+                    } => VecLayout::Blittable { element_size: *size },
+                    _ => VecLayout::Encoded,
                 }
             }
-            _ => crate::ir::codec::VecLayout::Encoded,
+            _ => VecLayout::Encoded,
+        }
+    }
+
+    fn build_closure_trampoline(
+        &self,
+        callback_id: &CallbackId,
+        param_name: &str,
+    ) -> SwiftClosureTrampoline {
+        let callback_def = self
+            .contract
+            .catalog
+            .resolve_callback(callback_id)
+            .expect("closure callback should exist");
+        let method = &callback_def.methods[0];
+
+        let param_types: Vec<String> = method
+            .params
+            .iter()
+            .map(|p| self.swift_type(&p.type_expr))
+            .collect();
+        let return_type = match &method.returns {
+            ReturnDef::Void => "Void".to_string(),
+            ReturnDef::Value(ty) => self.swift_type(ty),
+            ReturnDef::Result { ok, .. } => format!("Result<{}, Error>", self.swift_type(ok)),
+        };
+
+        let swift_type = if param_types.is_empty() {
+            format!("() -> {}", return_type)
+        } else {
+            format!("({}) -> {}", param_types.join(", "), return_type)
+        };
+
+        let upper_name = pascal_case(param_name);
+        let type_alias = format!("{}CallbackFn", upper_name);
+        let box_class = format!("{}CallbackBox", upper_name);
+
+        let trampoline_params: Vec<SwiftClosureTrampolineParam> = method
+            .params
+            .iter()
+            .enumerate()
+            .map(|(idx, p)| self.build_closure_trampoline_param(idx, &p.type_expr))
+            .collect();
+
+        SwiftClosureTrampoline {
+            type_alias,
+            swift_type,
+            box_class,
+            box_var: format!("{}Box", param_name),
+            ptr_var: format!("{}Ptr", param_name),
+            trampoline_var: format!("{}Trampoline", param_name),
+            param_name: param_name.to_string(),
+            trampoline_params,
+        }
+    }
+
+    fn build_closure_trampoline_param(
+        &self,
+        idx: usize,
+        ty: &TypeExpr,
+    ) -> SwiftClosureTrampolineParam {
+        let is_wire_encoded = self.is_wire_encoded_type(ty);
+
+        if is_wire_encoded {
+            let codec = self.codec_for_type_expr(ty);
+            let wire_buffer = format!("WireBuffer(ptr: ptr{}!, len: Int(len{}))", idx, idx);
+            let decode_expr = codec::decode_with_wire_buffer(&codec, &wire_buffer);
+            SwiftClosureTrampolineParam {
+                name: format!("ptr{}, len{}", idx, idx),
+                c_type: "UnsafePointer<UInt8>?, UInt".to_string(),
+                decode_expr,
+            }
+        } else {
+            SwiftClosureTrampolineParam {
+                name: format!("arg{}", idx),
+                c_type: self.abi_to_swift(self.abi_type_for(ty)),
+                decode_expr: format!("arg{}", idx),
+            }
+        }
+    }
+
+    fn is_wire_encoded_type(&self, ty: &TypeExpr) -> bool {
+        matches!(
+            ty,
+            TypeExpr::String
+                | TypeExpr::Bytes
+                | TypeExpr::Vec(_)
+                | TypeExpr::Option(_)
+                | TypeExpr::Result { .. }
+                | TypeExpr::Record(_)
+                | TypeExpr::Enum(_)
+                | TypeExpr::Custom(_)
+        )
+    }
+
+    fn abi_type_for(&self, ty: &TypeExpr) -> AbiType {
+        match ty {
+            TypeExpr::Void => AbiType::Void,
+            TypeExpr::Primitive(p) => match p {
+                PrimitiveType::Bool => AbiType::Bool,
+                PrimitiveType::I8 => AbiType::I8,
+                PrimitiveType::U8 => AbiType::U8,
+                PrimitiveType::I16 => AbiType::I16,
+                PrimitiveType::U16 => AbiType::U16,
+                PrimitiveType::I32 => AbiType::I32,
+                PrimitiveType::U32 => AbiType::U32,
+                PrimitiveType::I64 => AbiType::I64,
+                PrimitiveType::U64 => AbiType::U64,
+                PrimitiveType::ISize => AbiType::ISize,
+                PrimitiveType::USize => AbiType::USize,
+                PrimitiveType::F32 => AbiType::F32,
+                PrimitiveType::F64 => AbiType::F64,
+            },
+            TypeExpr::Handle(_) => AbiType::U64,
+            TypeExpr::Callback(_) => AbiType::U64,
+            _ => AbiType::Void,
         }
     }
 
@@ -817,10 +1004,23 @@ impl<'a> SwiftLowerer<'a> {
                 swift_type: self.abi_to_swift(*abi),
                 conversion: SwiftAsyncConversion::None,
             },
-            AsyncResultTransport::Encoded { codec } => SwiftAsyncResult::Encoded {
-                swift_type: codec::swift_type(codec),
-                throws,
-            },
+            AsyncResultTransport::Encoded { codec } => {
+                let ok_type = if throws {
+                    if let CodecPlan::Result { ok, .. } = codec {
+                        Some(codec::swift_type(ok))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                SwiftAsyncResult::Encoded {
+                    swift_type: codec::swift_type(codec),
+                    ok_type,
+                    codec: codec.clone(),
+                    throws,
+                }
+            }
             AsyncResultTransport::Handle { class_id, nullable } => SwiftAsyncResult::Direct {
                 swift_type: if *nullable {
                     format!("{}?", self.swift_name_for_class(class_id))

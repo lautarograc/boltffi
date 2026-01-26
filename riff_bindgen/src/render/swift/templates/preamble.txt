@@ -486,10 +486,7 @@ extension [UInt8] {
 
 {%- if has_streams %}
 
-typealias SubscriptionHandle = OpaquePointer
-typealias StreamContinuationCallback = @convention(c) (UInt64, Int8) -> Void
-
-enum StreamPollResult: Int8 {
+private enum StreamPollResult: Int8 {
     case ready = 0
     case closed = 1
 }

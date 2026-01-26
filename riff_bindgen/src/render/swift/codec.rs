@@ -13,7 +13,13 @@ pub fn swift_type(codec: &CodecPlan) -> String {
         CodecPlan::Bytes => "Data".to_string(),
         CodecPlan::Builtin(id) => swift_builtin(id.as_str()),
         CodecPlan::Option(inner) => format!("{}?", swift_type(inner)),
-        CodecPlan::Vec { element, .. } => format!("[{}]", swift_type(element)),
+        CodecPlan::Vec { element, .. } => {
+            if matches!(element.as_ref(), CodecPlan::Primitive(PrimitiveType::U8)) {
+                "Data".to_string()
+            } else {
+                format!("[{}]", swift_type(element))
+            }
+        }
         CodecPlan::Result { ok, err } => {
             format!("Result<{}, {}>", swift_type(ok), swift_type(err))
         }
@@ -81,6 +87,25 @@ pub fn decode_stream_item(codec: &CodecPlan) -> String {
 pub fn decode_value_at(codec: &CodecPlan, offset_expr: &str) -> String {
     let (reader, size_kind) = decode_expr(codec);
     let expr = reader.replace(OFFSET_VAR, offset_expr);
+    match size_kind {
+        SizeKind::Fixed(_) => expr,
+        SizeKind::Variable => format!("{}.value", expr),
+    }
+}
+
+pub fn decode_result_ok_throw(ok_codec: &CodecPlan) -> String {
+    let ok_decode = decode_value_at(ok_codec, "$0");
+    format!(
+        "try wire.readResultOrThrow(at: 0, ok: {{ {} }}, err: {{ FfiError(message: wire.readString(at: $0).value) }})",
+        ok_decode
+    )
+}
+
+pub fn decode_with_wire_buffer(codec: &CodecPlan, wire_buffer_expr: &str) -> String {
+    let (reader, size_kind) = decode_expr(codec);
+    let expr = reader
+        .replace("wire", &format!("{{ let wire = {}; return wire }}()", wire_buffer_expr))
+        .replace(OFFSET_VAR, "0");
     match size_kind {
         SizeKind::Fixed(_) => expr,
         SizeKind::Variable => format!("{}.value", expr),

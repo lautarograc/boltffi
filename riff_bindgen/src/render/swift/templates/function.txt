@@ -65,13 +65,13 @@ public func {{ func.name }}({% for p in func.params %}{{ p.signature() }}{% if !
                                 {{ prefix }}_free_buf_u8(buf)
 {%- if result.throws() %}
                                 do {
-                                    let value = {{ result.swift_type().unwrap() }}.decode(wireBuffer: wire, at: 0).value
+                                    let value = {{ result.decode_expr().unwrap() }}
                                     continuation.resume(returning: value)
                                 } catch {
                                     continuation.resume(throwing: error)
                                 }
 {%- else %}
-                                continuation.resume(returning: {{ result.swift_type().unwrap() }}.decode(wireBuffer: wire, at: 0).value)
+                                continuation.resume(returning: {{ result.decode_expr().unwrap() }})
 {%- endif %}
                             }
                         case .finishWithoutContinuation:
@@ -111,14 +111,19 @@ public func {{ func.name }}({% for p in func.params %}{{ p.signature() }}{% if !
     {{ wrapper }}
 {%- endif %}
 {%- endfor %}
+{%- for param in func.params %}
+{%- if let Some(open) = param.closure_wrap_open() %}
+    {% if !func.returns.is_void() %}return {% endif %}{{ open }}
+{%- endif %}
+{%- endfor %}
 {%- if func.returns.is_void() %}
     {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- elif func.returns.is_wire_encoded() %}
     let buf = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
     defer { {{ prefix }}_free_buf_u8(buf) }
     let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-{%- if let Some(ret_type) = func.returns.swift_type() %}
-    return {{ ret_type }}.decode(wireBuffer: wire, at: 0).value
+{%- if let Some(decode_expr) = func.returns.decode_expr() %}
+    return {{ decode_expr }}
 {%- endif %}
 {%- elif func.returns.is_throws() %}
     fatalError("throwing functions not yet implemented in IR backend")
@@ -133,5 +138,10 @@ public func {{ func.name }}({% for p in func.params %}{{ p.signature() }}{% if !
 {%- else %}
     return {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
+{%- for param in func.params %}
+{%- if let Some(close) = param.closure_wrap_close() %}
+    {{ close }}
+{%- endif %}
+{%- endfor %}
 {%- endmatch %}
 }

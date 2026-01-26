@@ -5,26 +5,53 @@ public final class {{ cls.name }} {
         self.handle = handle
     }
 {%- for ctor in cls.constructors %}
+{%- if ctor.is_designated() %}
 
-    public{% if ctor.name.is_some() %} convenience{% endif %} init({% for p in ctor.params %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_fallible %} throws{% endif %} {
-{%- for param in ctor.params %}
+    public init({% for p in ctor.params() %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_fallible() %} throws{% endif %} {
+{%- for param in ctor.params() %}
 {%- if let Some(wrapper) = param.wrapper_code() %}
         {{ wrapper }}
 {%- endif %}
 {%- endfor %}
-{%- if ctor.is_fallible %}
-        guard let ptr = {{ ctor.ffi_symbol }}({% for p in ctor.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else {
+{%- if ctor.is_fallible() %}
+        guard let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else {
             throw FfiError(message: takeLastErrorMessage())
         }
 {%- else %}
-        let ptr = {{ ctor.ffi_symbol }}({% for p in ctor.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
+        let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
 {%- endif %}
-{%- if ctor.name.is_some() %}
-        self.init(handle: ptr)
-{%- else %}
         self.handle = ptr
-{%- endif %}
     }
+{%- else if ctor.is_factory() %}
+
+    public static func {{ ctor.name().unwrap() }}(){% if ctor.is_fallible() %} throws{% endif %} -> {{ cls.name }} {
+{%- if ctor.is_fallible() %}
+        guard let ptr = {{ ctor.ffi_symbol() }}() else {
+            throw FfiError(message: takeLastErrorMessage())
+        }
+{%- else %}
+        let ptr = {{ ctor.ffi_symbol() }}()!
+{%- endif %}
+        return {{ cls.name }}(handle: ptr)
+    }
+{%- else if ctor.is_convenience() %}
+
+    public convenience init({% for p in ctor.params() %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_fallible() %} throws{% endif %} {
+{%- for param in ctor.params() %}
+{%- if let Some(wrapper) = param.wrapper_code() %}
+        {{ wrapper }}
+{%- endif %}
+{%- endfor %}
+{%- if ctor.is_fallible() %}
+        guard let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %}) else {
+            throw FfiError(message: takeLastErrorMessage())
+        }
+{%- else %}
+        let ptr = {{ ctor.ffi_symbol() }}({% for p in ctor.params() %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})!
+{%- endif %}
+        self.init(handle: ptr)
+    }
+{%- endif %}
 {%- endfor %}
 
     deinit {
@@ -103,13 +130,13 @@ public final class {{ cls.name }} {
                                     {{ prefix }}_free_buf_u8(buf)
 {%- if result.throws() %}
                                     do {
-                                        let value = {{ result.swift_type().unwrap() }}.decode(wireBuffer: wire, at: 0).value
+                                        let value = {{ result.decode_expr().unwrap() }}
                                         continuation.resume(returning: value)
                                     } catch {
                                         continuation.resume(throwing: error)
                                     }
 {%- else %}
-                                    continuation.resume(returning: {{ result.swift_type().unwrap() }}.decode(wireBuffer: wire, at: 0).value)
+                                    continuation.resume(returning: {{ result.decode_expr().unwrap() }})
 {%- endif %}
                                 }
                             case .finishWithoutContinuation:
@@ -149,6 +176,11 @@ public final class {{ cls.name }} {
         {{ wrapper }}
 {%- endif %}
 {%- endfor %}
+{%- for param in method.params %}
+{%- if let Some(open) = param.closure_wrap_open() %}
+        {% if !method.returns.is_void() %}return {% endif %}{{ open }}
+{%- endif %}
+{%- endfor %}
 {%- if method.returns.is_void() %}
 {%- if method.needs_handle() %}
         {{ symbol }}(handle{% for p in method.params %}, {{ p.ffi_arg() }}{% endfor %})
@@ -163,8 +195,8 @@ public final class {{ cls.name }} {
 {%- endif %}
         defer { {{ prefix }}_free_buf_u8(buf) }
         let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-{%- if let Some(ret_type) = method.returns.swift_type() %}
-        return {{ ret_type }}.decode(wireBuffer: wire, at: 0).value
+{%- if let Some(decode_expr) = method.returns.decode_expr() %}
+        return {{ decode_expr }}
 {%- endif %}
 {%- elif method.returns.is_throws() %}
         fatalError("throwing methods not yet implemented in IR backend")
@@ -191,10 +223,15 @@ public final class {{ cls.name }} {
         return {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {%- endif %}
+{%- for param in method.params %}
+{%- if let Some(close) = param.closure_wrap_close() %}
+        {{ close }}
+{%- endif %}
+{%- endfor %}
 {%- endmatch %}
     }
 {%- endfor %}
-{%- for stream in cls.streams %}
+{% for stream in cls.streams %}
 
 {%- match stream.mode %}
 {%- when SwiftStreamMode::Async %}

@@ -38,6 +38,8 @@ pub enum SwiftAsyncResult {
     },
     Encoded {
         swift_type: String,
+        ok_type: Option<String>,
+        codec: CodecPlan,
         throws: bool,
     },
 }
@@ -59,6 +61,11 @@ impl SwiftAsyncResult {
         match self {
             Self::Void => None,
             Self::Direct { swift_type, .. } => Some(swift_type),
+            Self::Encoded {
+                throws: true,
+                ok_type: Some(ok),
+                ..
+            } => Some(ok),
             Self::Encoded { swift_type, .. } => Some(swift_type),
         }
     }
@@ -67,12 +74,37 @@ impl SwiftAsyncResult {
         match self {
             Self::Void => "Void",
             Self::Direct { swift_type, .. } => swift_type,
+            Self::Encoded {
+                throws: true,
+                ok_type: Some(ok),
+                ..
+            } => ok,
             Self::Encoded { swift_type, .. } => swift_type,
         }
     }
 
     pub fn throws(&self) -> bool {
         matches!(self, Self::Encoded { throws: true, .. })
+    }
+
+    pub fn decode_expr(&self) -> Option<String> {
+        match self {
+            Self::Encoded {
+                throws: true,
+                codec: codec_plan,
+                ..
+            } => {
+                if let CodecPlan::Result { ok, .. } = codec_plan {
+                    Some(codec::decode_result_ok_throw(ok))
+                } else {
+                    Some(codec::decode_value_at(codec_plan, "0"))
+                }
+            }
+            Self::Encoded { codec: codec_plan, .. } => {
+                Some(codec::decode_value_at(codec_plan, "0"))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -252,17 +284,73 @@ pub enum SwiftStreamMode {
 }
 
 #[derive(Debug, Clone)]
-pub struct SwiftConstructor {
-    pub name: Option<String>,
-    pub ffi_symbol: String,
-    pub params: Vec<SwiftParam>,
-    pub is_fallible: bool,
-    pub doc: Option<String>,
+pub enum SwiftConstructor {
+    Designated {
+        ffi_symbol: String,
+        params: Vec<SwiftParam>,
+        is_fallible: bool,
+        doc: Option<String>,
+    },
+    Factory {
+        name: String,
+        ffi_symbol: String,
+        is_fallible: bool,
+        doc: Option<String>,
+    },
+    Convenience {
+        name: String,
+        ffi_symbol: String,
+        params: Vec<SwiftParam>,
+        is_fallible: bool,
+        doc: Option<String>,
+    },
 }
 
 impl SwiftConstructor {
+    pub fn is_designated(&self) -> bool {
+        matches!(self, Self::Designated { .. })
+    }
+
+    pub fn is_factory(&self) -> bool {
+        matches!(self, Self::Factory { .. })
+    }
+
+    pub fn is_convenience(&self) -> bool {
+        matches!(self, Self::Convenience { .. })
+    }
+
+    pub fn ffi_symbol(&self) -> &str {
+        match self {
+            Self::Designated { ffi_symbol, .. }
+            | Self::Factory { ffi_symbol, .. }
+            | Self::Convenience { ffi_symbol, .. } => ffi_symbol,
+        }
+    }
+
+    pub fn params(&self) -> &[SwiftParam] {
+        match self {
+            Self::Designated { params, .. } | Self::Convenience { params, .. } => params,
+            Self::Factory { .. } => &[],
+        }
+    }
+
+    pub fn is_fallible(&self) -> bool {
+        match self {
+            Self::Designated { is_fallible, .. }
+            | Self::Factory { is_fallible, .. }
+            | Self::Convenience { is_fallible, .. } => *is_fallible,
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Designated { .. } => None,
+            Self::Factory { name, .. } | Self::Convenience { name, .. } => Some(name),
+        }
+    }
+
     pub fn has_wrappers(&self) -> bool {
-        self.params.iter().any(|p| p.needs_wrapper())
+        self.params().iter().any(|p| p.needs_wrapper())
     }
 }
 
@@ -383,26 +471,55 @@ pub struct SwiftParam {
 
 impl SwiftParam {
     pub fn signature(&self) -> String {
+        let inout_prefix = if matches!(self.conversion, SwiftConversion::MutableBuffer { .. }) {
+            "inout "
+        } else {
+            ""
+        };
         match &self.label {
             Some(label) if label != &self.name => {
-                format!("{} {}: {}", label, self.name, self.swift_type)
+                format!("{} {}: {}{}", label, self.name, inout_prefix, self.swift_type)
             }
-            _ => format!("{}: {}", self.name, self.swift_type),
+            _ => format!("{}: {}{}", self.name, inout_prefix, self.swift_type),
         }
     }
 
     pub fn ffi_arg(&self) -> String {
         match &self.conversion {
             SwiftConversion::Direct => self.name.clone(),
-            SwiftConversion::ToString => format!("{}.cString", self.name),
-            SwiftConversion::ToData => format!(
-                "{}.withUnsafeBytes {{ $0.baseAddress }}, UInt32({}.count)",
+            SwiftConversion::ToString => format!(
+                "UnsafeRawPointer({}Ptr).assumingMemoryBound(to: UInt8.self), UInt({}.utf8.count)",
                 self.name, self.name
             ),
-            SwiftConversion::ToWireBuffer { .. } => {
-                format!("{}_buf.ptr, UInt32({}_buf.len)", self.name, self.name)
+            SwiftConversion::ToData => format!(
+                "{}.withUnsafeBytes {{ $0.baseAddress }}, UInt({}.count)",
+                self.name, self.name
+            ),
+            SwiftConversion::ToWireBuffer { codec } => {
+                if matches!(codec, CodecPlan::Option(_)) {
+                    format!(
+                        "{}Ptr?.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt({}Ptr?.count ?? 0)",
+                        self.name, self.name
+                    )
+                } else {
+                    format!(
+                        "{}Ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt({}Ptr.count)",
+                        self.name, self.name
+                    )
+                }
             }
-            SwiftConversion::WrapCallback { .. } => format!("{}_ptr, {}_fn", self.name, self.name),
+            SwiftConversion::PrimitiveBuffer { .. } => {
+                format!("{}Ptr.baseAddress, UInt({}Ptr.count)", self.name, self.name)
+            }
+            SwiftConversion::MutableBuffer { .. } => {
+                format!("{}Ptr.baseAddress, UInt({}Ptr.count)", self.name, self.name)
+            }
+            SwiftConversion::WrapCallback { protocol } => {
+                format!("{}Bridge.create({})", protocol, self.name)
+            }
+            SwiftConversion::InlineClosure { closure } => {
+                format!("{}, {}", closure.trampoline_var, closure.ptr_var)
+            }
             SwiftConversion::PassHandle { nullable, .. } => {
                 if *nullable {
                     format!("{}?.handle", self.name)
@@ -419,12 +536,111 @@ impl SwiftParam {
 
     pub fn wrapper_code(&self) -> Option<String> {
         match &self.conversion {
-            SwiftConversion::ToWireBuffer { .. } => Some(format!(
-                "let {}_buf = {}.wireEncoded()\n    defer {{ {}_buf.deallocate() }}",
-                self.name, self.name, self.name
+            SwiftConversion::InlineClosure { closure } => Some(closure.render()),
+            _ => None,
+        }
+    }
+
+    pub fn needs_closure_wrap(&self) -> bool {
+        matches!(
+            self.conversion,
+            SwiftConversion::ToString
+                | SwiftConversion::ToWireBuffer { .. }
+                | SwiftConversion::PrimitiveBuffer { .. }
+                | SwiftConversion::MutableBuffer { .. }
+        )
+    }
+
+    pub fn closure_wrap_open(&self) -> Option<String> {
+        match &self.conversion {
+            SwiftConversion::ToString => Some(format!(
+                "{}.withCString {{ {}Ptr in",
+                self.name, self.name
+            )),
+            SwiftConversion::ToWireBuffer { codec } => {
+                if matches!(codec, CodecPlan::Vec { .. }) {
+                    Some(format!(
+                        "withWireEncodedArray({}) {{ {}Ptr in",
+                        self.name, self.name
+                    ))
+                } else if matches!(codec, CodecPlan::Option(_)) {
+                    Some(format!(
+                        "withWireEncodedOptional({}) {{ {}Ptr in",
+                        self.name, self.name
+                    ))
+                } else {
+                    Some(format!(
+                        "{}.wireEncode().withUnsafeBytes {{ {}Ptr in",
+                        self.name, self.name
+                    ))
+                }
+            }
+            SwiftConversion::PrimitiveBuffer { .. } => Some(format!(
+                "{}.withUnsafeBufferPointer {{ {}Ptr in",
+                self.name, self.name
+            )),
+            SwiftConversion::MutableBuffer { .. } => Some(format!(
+                "{}.withUnsafeMutableBufferPointer {{ {}Ptr in",
+                self.name, self.name
             )),
             _ => None,
         }
+    }
+
+    pub fn closure_wrap_close(&self) -> Option<&'static str> {
+        match &self.conversion {
+            SwiftConversion::ToString
+            | SwiftConversion::ToWireBuffer { .. }
+            | SwiftConversion::PrimitiveBuffer { .. }
+            | SwiftConversion::MutableBuffer { .. } => Some("}"),
+            _ => None,
+        }
+    }
+}
+
+impl SwiftClosureTrampoline {
+    pub fn render(&self) -> String {
+        let c_params: String = self
+            .trampoline_params
+            .iter()
+            .map(|p| p.c_type.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let param_names: String = self
+            .trampoline_params
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let decode_args: String = self
+            .trampoline_params
+            .iter()
+            .map(|p| p.decode_expr.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!(
+            r#"typealias {type_alias} = {swift_type}
+        class {box_class} {{ let fn_: {type_alias}; init(_ fn_: @escaping {type_alias}) {{ self.fn_ = fn_ }} }}
+        let {box_var} = {box_class}({param_name})
+        let {ptr_var} = Unmanaged.passRetained({box_var}).toOpaque()
+        defer {{ Unmanaged<{box_class}>.fromOpaque({ptr_var}).release() }}
+        let {trampoline_var}: @convention(c) (UnsafeMutableRawPointer?, {c_params}) -> Void = {{ ud, {param_names} in
+            Unmanaged<{box_class}>.fromOpaque(ud!).takeUnretainedValue().fn_({decode_args})
+        }}"#,
+            type_alias = self.type_alias,
+            swift_type = self.swift_type,
+            box_class = self.box_class,
+            box_var = self.box_var,
+            ptr_var = self.ptr_var,
+            trampoline_var = self.trampoline_var,
+            param_name = self.param_name,
+            c_params = c_params,
+            param_names = param_names,
+            decode_args = decode_args,
+        )
     }
 }
 
@@ -434,8 +650,30 @@ pub enum SwiftConversion {
     ToString,
     ToData,
     ToWireBuffer { codec: CodecPlan },
+    PrimitiveBuffer { element_type: String },
+    MutableBuffer { element_type: String },
     WrapCallback { protocol: String },
+    InlineClosure { closure: SwiftClosureTrampoline },
     PassHandle { class_name: String, nullable: bool },
+}
+
+#[derive(Debug, Clone)]
+pub struct SwiftClosureTrampoline {
+    pub type_alias: String,
+    pub swift_type: String,
+    pub box_class: String,
+    pub box_var: String,
+    pub ptr_var: String,
+    pub trampoline_var: String,
+    pub param_name: String,
+    pub trampoline_params: Vec<SwiftClosureTrampolineParam>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwiftClosureTrampolineParam {
+    pub name: String,
+    pub c_type: String,
+    pub decode_expr: String,
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +742,16 @@ impl SwiftReturn {
                 class_name,
                 nullable,
             } => Some((class_name.as_str(), *nullable)),
+            _ => None,
+        }
+    }
+
+    pub fn decode_expr(&self) -> Option<String> {
+        match self {
+            SwiftReturn::FromWireBuffer { codec: codec_plan, .. } => {
+                Some(codec::decode_value_at(codec_plan, "0"))
+            }
+            SwiftReturn::Throws { ok, .. } => ok.decode_expr(),
             _ => None,
         }
     }
