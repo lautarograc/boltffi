@@ -109,7 +109,7 @@ impl<'a> AndroidPackager<'a> {
             source,
         })?;
 
-        let lib_name = self.config.android_jni_library_name();
+        let lib_name = self.config.library_name();
         let dest_path = abi_dir.join(format!("lib{}.so", lib_name));
         let build_dir = PathBuf::from("target")
             .join("riff")
@@ -141,7 +141,12 @@ impl<'a> AndroidPackager<'a> {
             .arg("-o")
             .arg(&dest_path)
             .arg(&object_path)
-            .arg(&library.path);
+            .arg("-Wl,--whole-archive")
+            .arg(&library.path)
+            .arg("-Wl,--no-whole-archive")
+            .arg("-lm")
+            .arg("-llog")
+            .arg("-ldl");
         run_command(link)?;
 
         Ok(dest_path)
