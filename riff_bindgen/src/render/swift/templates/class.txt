@@ -1,4 +1,4 @@
-public final class {{ cls.name }} {
+{{ self::swift_doc_block(cls.doc, "") }}public final class {{ cls.name }} {
     let handle: OpaquePointer
 
     init(handle: OpaquePointer) {
@@ -7,7 +7,7 @@ public final class {{ cls.name }} {
 {%- for ctor in cls.constructors %}
 {%- if ctor.is_designated() %}
 
-    public init({% for p in ctor.params() %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_fallible() %} throws{% endif %} {
+{{ self::swift_doc_block(ctor.doc(), "    ") }}    public init({% for p in ctor.params() %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_fallible() %} throws{% endif %} {
 {%- for param in ctor.params() %}
 {%- if let Some(wrapper) = param.wrapper_code() %}
         {{ wrapper }}
@@ -24,7 +24,7 @@ public final class {{ cls.name }} {
     }
 {%- else if ctor.is_factory() %}
 
-    public static func {{ ctor.name().unwrap() }}(){% if ctor.is_fallible() %} throws{% endif %} -> {{ cls.name }} {
+{{ self::swift_doc_block(ctor.doc(), "    ") }}    public static func {{ ctor.name().unwrap() }}(){% if ctor.is_fallible() %} throws{% endif %} -> {{ cls.name }} {
 {%- if ctor.is_fallible() %}
         guard let ptr = {{ ctor.ffi_symbol() }}() else {
             throw FfiError(message: takeLastErrorMessage())
@@ -36,7 +36,7 @@ public final class {{ cls.name }} {
     }
 {%- else if ctor.is_convenience() %}
 
-    public convenience init({% for p in ctor.params() %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_fallible() %} throws{% endif %} {
+{{ self::swift_doc_block(ctor.doc(), "    ") }}    public convenience init({% for p in ctor.params() %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if ctor.is_fallible() %} throws{% endif %} {
 {%- for param in ctor.params() %}
 {%- if let Some(wrapper) = param.wrapper_code() %}
         {{ wrapper }}
@@ -59,7 +59,7 @@ public final class {{ cls.name }} {
     }
 {%- for method in cls.methods %}
 
-    public{% if method.is_static %} static{% endif %} func {{ method.name }}({% for p in method.params %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.mode.is_async() %} async throws{% if let Some(result) = method.mode.async_result() %}{% if let Some(ret) = result.swift_type() %} -> {{ ret }}{% endif %}{% endif %}{% else %}{% if method.returns.is_throws() %} throws{% endif %}{% if let Some(ret) = method.returns.swift_type() %} -> {{ ret }}{% endif %}{% endif %} {
+{{ self::swift_doc_block(method.doc, "    ") }}    public{% if method.is_static %} static{% endif %} func {{ method.name }}({% for p in method.params %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.mode.is_async() %} async throws{% if let Some(result) = method.mode.async_result() %}{% if let Some(ret) = result.swift_type() %} -> {{ ret }}{% endif %}{% endif %}{% else %}{% if method.returns.is_throws() %} throws{% endif %}{% if let Some(ret) = method.returns.swift_type() %} -> {{ ret }}{% endif %}{% endif %} {
 {%- match method.mode %}
 {%- when SwiftCallMode::Async { start, poll, complete, cancel, free, result } %}
 {%- for param in method.params %}

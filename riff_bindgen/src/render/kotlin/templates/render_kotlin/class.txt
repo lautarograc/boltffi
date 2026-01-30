@@ -1,13 +1,8 @@
-{%- match doc %}{% when Some with (d) %}
-/**
- * {{ d }}
- */
-{%- when None %}{% endmatch %}
-class {{ class_name }} private constructor(internal val handle: Long) : AutoCloseable {
+{{ self::kdoc_block(doc, "") }}class {{ class_name }} private constructor(internal val handle: Long) : AutoCloseable {
     private val closed = AtomicBoolean(false)
 {%- for ctor in constructors %}{% if !ctor.is_factory %}
 
-    constructor({% for param in ctor.signature_params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}) : this(
+{{ self::kdoc_block(ctor.doc, "    ") }}    constructor({% for param in ctor.signature_params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}) : this(
 {%- if ctor.wire_writers.is_empty() %}
 {%- if ctor.is_fallible %}
         kotlin.run {
@@ -95,7 +90,7 @@ class {{ class_name }} private constructor(internal val handle: Long) : AutoClos
 
     companion object {
 {%- for ctor in constructors %}{% if ctor.is_factory && (use_companion_methods || ctor.signature_params.is_empty()) %}
-        fun {{ ctor.name }}({% for param in ctor.signature_params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}): {{ class_name }} {
+{{ self::kdoc_block(ctor.doc, "        ") }}        fun {{ ctor.name }}({% for param in ctor.signature_params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}): {{ class_name }} {
 {%- if ctor.wire_writers.is_empty() %}
 {%- if ctor.is_fallible %}
             val handle = Native.{{ ctor.ffi_name }}({% for arg in ctor.native_args %}{{ arg }}{% if !loop.last %}, {% endif %}{% endfor %})

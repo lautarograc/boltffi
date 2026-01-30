@@ -146,6 +146,7 @@ pub struct SwiftRecord {
     pub fields: Vec<SwiftField>,
     pub is_blittable: bool,
     pub blittable_size: Option<usize>,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +156,7 @@ pub struct SwiftField {
     pub default_expr: Option<String>,
     pub decode: ReadSeq,
     pub encode: WriteSeq,
+    pub doc: Option<String>,
     pub c_offset: Option<usize>,
 }
 
@@ -215,6 +217,7 @@ pub struct SwiftVariant {
     pub swift_name: String,
     pub discriminant: i64,
     pub payload: SwiftVariantPayload,
+    pub doc: Option<String>,
 }
 
 impl SwiftVariant {
@@ -453,6 +456,14 @@ impl SwiftConstructor {
     pub fn call_expr(&self) -> String {
         ffi_call_expr(self.ffi_symbol(), &[], self.params())
     }
+
+    pub fn doc(&self) -> &Option<String> {
+        match self {
+            Self::Designated { doc, .. }
+            | Self::Factory { doc, .. }
+            | Self::Convenience { doc, .. } => doc,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -569,6 +580,7 @@ pub struct SwiftCallbackMethod {
     pub returns: SwiftReturn,
     pub is_async: bool,
     pub has_out_param: bool,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -182,6 +182,7 @@ impl<'a> SwiftLowerer<'a> {
                                 default_expr: None,
                                 decode,
                                 encode,
+                                doc: field.doc.clone(),
                                 c_offset,
                             }
                         })
@@ -192,6 +193,7 @@ impl<'a> SwiftLowerer<'a> {
                     fields,
                     is_blittable: abi_record.is_blittable,
                     blittable_size: abi_record.size,
+                    doc: def.doc.clone(),
                 }
             })
             .collect()
@@ -209,13 +211,16 @@ impl<'a> SwiftLowerer<'a> {
             .all_enums()
             .map(|def| {
                 let abi_enum = self.abi_index.enumeration(self.abi, &def.id);
+                let variant_docs = def.variant_docs();
                 let variants = abi_enum
                     .variants
                     .iter()
-                    .map(|variant| SwiftVariant {
+                    .enumerate()
+                    .map(|(i, variant)| SwiftVariant {
                         swift_name: variant.name.as_str().to_lower_camel_case(),
                         discriminant: variant.discriminant,
                         payload: self.lower_variant_payload(variant),
+                        doc: variant_docs.get(i).cloned().flatten(),
                     })
                     .collect();
 
@@ -281,6 +286,7 @@ impl<'a> SwiftLowerer<'a> {
             default_expr: None,
             decode: field.decode.clone(),
             encode,
+            doc: None,
             c_offset: None,
         }
     }
@@ -526,6 +532,7 @@ impl<'a> SwiftLowerer<'a> {
                             returns,
                             is_async: abi_method.is_async,
                             has_out_param,
+                            doc: method_def.doc.clone(),
                         }
                     })
                     .collect();

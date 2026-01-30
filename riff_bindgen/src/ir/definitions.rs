@@ -42,6 +42,19 @@ pub struct EnumDef {
     pub deprecated: Option<DeprecationInfo>,
 }
 
+impl EnumDef {
+    pub fn variant_docs(&self) -> Vec<Option<String>> {
+        match &self.repr {
+            EnumRepr::CStyle { variants, .. } => {
+                variants.iter().map(|v| v.doc.clone()).collect()
+            }
+            EnumRepr::Data { variants, .. } => {
+                variants.iter().map(|v| v.doc.clone()).collect()
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum EnumRepr {
     CStyle {

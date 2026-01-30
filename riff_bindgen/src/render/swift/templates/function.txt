@@ -1,4 +1,4 @@
-public func {{ func.name }}({% for p in func.params %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if func.mode.is_async() %} async throws{% if let Some(result) = func.mode.async_result() %}{% if let Some(ret) = result.swift_type() %} -> {{ ret }}{% endif %}{% endif %}{% else %}{% if func.returns.is_throws() %} throws{% endif %}{% if let Some(ret) = func.returns.swift_type() %} -> {{ ret }}{% endif %}{% endif %} {
+{{ self::swift_doc_block(func.doc, "") }}public func {{ func.name }}({% for p in func.params %}{{ p.signature() }}{% if !loop.last %}, {% endif %}{% endfor %}){% if func.mode.is_async() %} async throws{% if let Some(result) = func.mode.async_result() %}{% if let Some(ret) = result.swift_type() %} -> {{ ret }}{% endif %}{% endif %}{% else %}{% if func.returns.is_throws() %} throws{% endif %}{% if let Some(ret) = func.returns.swift_type() %} -> {{ ret }}{% endif %}{% endif %} {
 {%- match func.mode %}
 {%- when SwiftCallMode::Async { start, poll, complete, cancel, free, result } %}
 {%- for param in func.params %}

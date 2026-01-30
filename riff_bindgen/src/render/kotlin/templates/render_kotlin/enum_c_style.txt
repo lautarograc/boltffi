@@ -1,6 +1,6 @@
-enum class {{ class_name }}(val value: Int) {
+{{ self::kdoc_block(doc, "") }}enum class {{ class_name }}(val value: Int) {
 {%- for variant in variants %}
-    {{ variant.name }}({{ variant.tag }}){% if !loop.last %},{% else %};{% endif %}
+{{ self::kdoc_block(variant.doc, "    ") }}    {{ variant.name }}({{ variant.tag }}){% if !loop.last %},{% else %};{% endif %}
 {%- endfor %}
 
     companion object {

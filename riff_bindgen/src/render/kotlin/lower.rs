@@ -345,15 +345,22 @@ impl<'a> KotlinLowerer<'a> {
         } else {
             KotlinEnumKind::Sealed
         };
+        let variant_docs = enumeration.variant_docs();
         let variants = abi_enum
             .variants
             .iter()
-            .map(|variant| self.lower_enum_variant(variant, kind))
+            .enumerate()
+            .map(|(i, variant)| {
+                let mut v = self.lower_enum_variant(variant, kind);
+                v.doc = variant_docs.get(i).cloned().flatten();
+                v
+            })
             .collect::<Vec<_>>();
         KotlinEnum {
             class_name,
             variants,
             kind,
+            doc: enumeration.doc.clone(),
         }
     }
 
@@ -377,6 +384,7 @@ impl<'a> KotlinLowerer<'a> {
             name,
             tag: variant.discriminant,
             fields,
+            doc: None,
         }
     }
 
@@ -470,6 +478,7 @@ impl<'a> KotlinLowerer<'a> {
             fields,
             is_blittable: record.is_blittable(),
             struct_size: self.record_struct_size(record.id.as_str()),
+            doc: record.doc.clone(),
         }
     }
 
@@ -493,6 +502,7 @@ impl<'a> KotlinLowerer<'a> {
             wire_size_expr: emit::emit_size_expr(&encode_seq.size),
             wire_encode: emit::emit_write_expr(&encode_seq),
             padding_after: self.field_padding_after(&record.id, &field.name),
+            doc: field.doc.clone(),
         }
     }
 
@@ -630,6 +640,7 @@ impl<'a> KotlinLowerer<'a> {
             async_call,
             decode_expr,
             is_blittable_return,
+            doc: func.doc.clone(),
         }
     }
 
@@ -704,6 +715,7 @@ impl<'a> KotlinLowerer<'a> {
             wire_writer_closes,
             native_args,
             ffi_name: call.symbol.as_str().to_string(),
+            doc: ctor.doc().map(String::from),
         }
     }
 
@@ -751,6 +763,7 @@ impl<'a> KotlinLowerer<'a> {
                 return_abi: &async_call.return_abi,
                 decode_expr: &async_call.decode_expr,
                 is_blittable_return: async_call.is_blittable_return,
+                doc: &method.doc,
             }
             .render()
             .unwrap()
@@ -769,6 +782,7 @@ impl<'a> KotlinLowerer<'a> {
                 decode_expr: &decode_expr,
                 is_blittable_return,
                 include_handle,
+                doc: &method.doc,
             }
             .render()
             .unwrap()
@@ -982,6 +996,7 @@ impl<'a> KotlinLowerer<'a> {
             ffi_name: abi_method.vtable_field.as_str().to_string(),
             params,
             return_info,
+            doc: method.doc.clone(),
         }
     }
 
@@ -1012,6 +1027,7 @@ impl<'a> KotlinLowerer<'a> {
             invoker_name: invoker.name,
             params,
             return_info,
+            doc: method.doc.clone(),
         }
     }
 

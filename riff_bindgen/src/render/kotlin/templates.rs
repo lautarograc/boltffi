@@ -3,6 +3,24 @@ use askama::Template;
 use super::plan::KotlinMethodImpl::{AsyncMethod, SyncMethod};
 use super::plan::{KotlinModule, KotlinStreamMode};
 
+pub fn kdoc_block(doc: &Option<String>, indent: &str) -> String {
+    match doc {
+        Some(text) => {
+            let mut result = format!("{indent}/**\n");
+            text.lines().for_each(|line| {
+                if line.is_empty() {
+                    result.push_str(&format!("{indent} *\n"));
+                } else {
+                    result.push_str(&format!("{indent} * {line}\n"));
+                }
+            });
+            result.push_str(&format!("{indent} */\n"));
+            result
+        }
+        None => String::new(),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "render_kotlin/preamble.txt", escape = "none")]
 pub struct PreambleTemplate<'a> {
@@ -31,6 +49,7 @@ pub struct RecordTemplate<'a> {
     pub fields: &'a [super::plan::KotlinRecordField],
     pub is_blittable: bool,
     pub struct_size: usize,
+    pub doc: &'a Option<String>,
 }
 
 #[derive(Template)]
@@ -56,6 +75,7 @@ pub struct RecordWriterTemplate<'a> {
 pub struct CStyleEnumTemplate<'a> {
     pub class_name: &'a str,
     pub variants: &'a [super::plan::KotlinEnumVariant],
+    pub doc: &'a Option<String>,
 }
 
 #[derive(Template)]
@@ -64,6 +84,7 @@ pub struct SealedEnumTemplate<'a> {
     pub class_name: &'a str,
     pub variants: &'a [super::plan::KotlinEnumVariant],
     pub is_error: bool,
+    pub doc: &'a Option<String>,
 }
 
 #[derive(Template)]
@@ -91,6 +112,7 @@ pub struct WireFunctionTemplate<'a> {
     pub return_abi: &'a super::plan::KotlinReturnAbi,
     pub decode_expr: &'a str,
     pub is_blittable_return: bool,
+    pub doc: &'a Option<String>,
 }
 
 #[derive(Template)]
@@ -113,6 +135,7 @@ pub struct AsyncFunctionTemplate<'a> {
     pub return_abi: &'a super::plan::KotlinReturnAbi,
     pub decode_expr: &'a str,
     pub is_blittable_return: bool,
+    pub doc: &'a Option<String>,
 }
 
 #[derive(Template)]
@@ -145,6 +168,7 @@ pub struct WireMethodTemplate<'a> {
     pub decode_expr: &'a str,
     pub is_blittable_return: bool,
     pub include_handle: bool,
+    pub doc: &'a Option<String>,
 }
 
 #[derive(Template)]
@@ -167,6 +191,7 @@ pub struct AsyncMethodTemplate<'a> {
     pub return_abi: &'a super::plan::KotlinReturnAbi,
     pub decode_expr: &'a str,
     pub is_blittable_return: bool,
+    pub doc: &'a Option<String>,
 }
 
 #[derive(Template)]
@@ -212,6 +237,7 @@ impl KotlinEmitter {
                 CStyleEnumTemplate {
                     class_name: &enumeration.class_name,
                     variants: &enumeration.variants,
+                    doc: &enumeration.doc,
                 }
                 .render()
                 .unwrap()
@@ -220,6 +246,7 @@ impl KotlinEmitter {
                     class_name: &enumeration.class_name,
                     variants: &enumeration.variants,
                     is_error: enumeration.is_error(),
+                    doc: &enumeration.doc,
                 }
                 .render()
                 .unwrap()
@@ -246,6 +273,7 @@ impl KotlinEmitter {
                 fields: &record.fields,
                 is_blittable: record.is_blittable,
                 struct_size: record.struct_size,
+                doc: &record.doc,
             }
             .render()
             .unwrap();
@@ -309,6 +337,7 @@ impl KotlinEmitter {
                     return_abi: &async_call.return_abi,
                     decode_expr: &async_call.decode_expr,
                     is_blittable_return: async_call.is_blittable_return,
+                    doc: &function.doc,
                 }
                 .render()
                 .unwrap()
@@ -326,6 +355,7 @@ impl KotlinEmitter {
                     return_abi: &function.return_abi,
                     decode_expr: &function.decode_expr,
                     is_blittable_return: function.is_blittable_return,
+                    doc: &function.doc,
                 }
                 .render()
                 .unwrap()
@@ -410,5 +440,134 @@ impl KotlinEmitter {
             .join("\n\n");
         output.push('\n');
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use askama::Template;
+
+    use super::*;
+    use super::super::plan::{
+        KotlinClass, KotlinConstructor, KotlinEnumVariant, KotlinMethod, KotlinMethodImpl,
+        KotlinRecordField, KotlinSignatureParam,
+    };
+
+    #[test]
+    fn snapshot_record_with_field_docs() {
+        let template = RecordTemplate {
+            class_name: "Location",
+            fields: &[
+                KotlinRecordField {
+                    name: "id".to_string(),
+                    kotlin_type: "Long".to_string(),
+                    default_value: None,
+                    read_expr: "wire.readI64(offset)".to_string(),
+                    local_name: "id".to_string(),
+                    wire_decode_inline: "wire.readI64(offset)".to_string(),
+                    wire_advance_expr: "wire.advanceI64()".to_string(),
+                    wire_size_expr: "8".to_string(),
+                    wire_encode: "wire.writeI64(id)".to_string(),
+                    padding_after: 0,
+                    doc: Some("Unique identifier for this location.".to_string()),
+                },
+                KotlinRecordField {
+                    name: "lat".to_string(),
+                    kotlin_type: "Double".to_string(),
+                    default_value: None,
+                    read_expr: "wire.readF64(offset + 8)".to_string(),
+                    local_name: "lat".to_string(),
+                    wire_decode_inline: "wire.readF64(offset + 8)".to_string(),
+                    wire_advance_expr: "wire.advanceF64()".to_string(),
+                    wire_size_expr: "8".to_string(),
+                    wire_encode: "wire.writeF64(lat)".to_string(),
+                    padding_after: 0,
+                    doc: Some("Latitude in decimal degrees.".to_string()),
+                },
+            ],
+            is_blittable: true,
+            struct_size: 16,
+            doc: &Some("A physical location with coordinates.".to_string()),
+        };
+        insta::assert_snapshot!(template.render().unwrap());
+    }
+
+    #[test]
+    fn snapshot_enum_with_variant_docs() {
+        let template = CStyleEnumTemplate {
+            class_name: "Direction",
+            variants: &[
+                KotlinEnumVariant {
+                    name: "North".to_string(),
+                    tag: 0,
+                    fields: vec![],
+                    doc: Some("Pointing toward the north pole.".to_string()),
+                },
+                KotlinEnumVariant {
+                    name: "South".to_string(),
+                    tag: 1,
+                    fields: vec![],
+                    doc: None,
+                },
+            ],
+            doc: &Some("A cardinal compass direction.".to_string()),
+        };
+        insta::assert_snapshot!(template.render().unwrap());
+    }
+
+    #[test]
+    fn snapshot_class_with_documented_constructors_and_method() {
+        let cls = KotlinClass {
+            class_name: "DataStore".to_string(),
+            doc: Some("A persistent key-value data store.".to_string()),
+            prefix: "riff".to_string(),
+            ffi_free: "riff_data_store_free".to_string(),
+            constructors: vec![
+                KotlinConstructor {
+                    name: "DataStore".to_string(),
+                    is_factory: false,
+                    is_fallible: false,
+                    signature_params: vec![KotlinSignatureParam {
+                        name: "capacity".to_string(),
+                        kotlin_type: "Int".to_string(),
+                    }],
+                    wire_writers: vec![],
+                    wire_writer_closes: vec![],
+                    native_args: vec!["capacity".to_string()],
+                    ffi_name: "riff_data_store_new".to_string(),
+                    doc: Some("Creates a new data store with the given capacity.".to_string()),
+                },
+                KotlinConstructor {
+                    name: "withDefaults".to_string(),
+                    is_factory: true,
+                    is_fallible: false,
+                    signature_params: vec![],
+                    wire_writers: vec![],
+                    wire_writer_closes: vec![],
+                    native_args: vec![],
+                    ffi_name: "riff_data_store_with_defaults".to_string(),
+                    doc: Some("Creates a data store with sensible default settings.".to_string()),
+                },
+            ],
+            methods: vec![KotlinMethod {
+                impl_: KotlinMethodImpl::SyncMethod(
+                    "/**\n * Inserts a value into the store by key.\n */\nfun insert(key: String) { Native.riff_data_store_insert(handle, key) }".to_string(),
+                ),
+            }],
+            streams: vec![],
+            use_companion_methods: true,
+        };
+        let template = ClassTemplate {
+            class_name: &cls.class_name,
+            doc: &cls.doc,
+            constructors: &cls.constructors,
+            methods: &cls.methods,
+            streams: &cls.streams,
+            use_companion_methods: cls.use_companion_methods,
+            has_factory_ctors: cls.has_factory_ctors(),
+            prefix: &cls.prefix,
+            ffi_free: &cls.ffi_free,
+        };
+        insta::assert_snapshot!(template.render().unwrap());
     }
 }

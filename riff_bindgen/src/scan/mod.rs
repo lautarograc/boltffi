@@ -933,7 +933,11 @@ impl SourceScanner {
                         &self.compiler_canonical_types,
                         None,
                     )?;
-                    Some(RecordField::new(&field_name, field_type))
+                    let mut record_field = RecordField::new(&field_name, field_type);
+                    if let Some(doc) = extract_doc_string(&f.attrs) {
+                        record_field = record_field.with_doc(doc);
+                    }
+                    Some(record_field)
                 })
                 .collect(),
             _ => Vec::new(),
@@ -971,7 +975,11 @@ impl SourceScanner {
                                 &self.compiler_canonical_types,
                                 None,
                             )?;
-                            Some(RecordField::new(&field_name, field_type))
+                            let mut record_field = RecordField::new(&field_name, field_type);
+                            if let Some(doc) = extract_doc_string(&f.attrs) {
+                                record_field = record_field.with_doc(doc);
+                            }
+                            Some(record_field)
                         })
                         .collect(),
                     Fields::Unnamed(unnamed) => unnamed
@@ -2045,5 +2053,73 @@ mod tests {
         );
 
         assert!(reg.is_enum("Color"));
+    }
+
+    #[test]
+    fn extract_doc_from_struct_field() {
+        let source: syn::File = syn::parse_quote! {
+            struct Location {
+                /// Unique identifier for this location.
+                id: i64,
+                lat: f64,
+            }
+        };
+        let fields = match &source.items[0] {
+            Item::Struct(s) => match &s.fields {
+                Fields::Named(named) => &named.named,
+                _ => panic!("expected named fields"),
+            },
+            _ => panic!("expected struct"),
+        };
+        assert_eq!(
+            extract_doc_string(&fields[0].attrs),
+            Some("Unique identifier for this location.".to_string())
+        );
+        assert_eq!(extract_doc_string(&fields[1].attrs), None);
+    }
+
+    #[test]
+    fn extract_doc_from_enum_variant() {
+        let source: syn::File = syn::parse_quote! {
+            enum Direction {
+                /// Pointing north.
+                North,
+                South,
+            }
+        };
+        let variants = match &source.items[0] {
+            Item::Enum(e) => &e.variants,
+            _ => panic!("expected enum"),
+        };
+        assert_eq!(
+            extract_doc_string(&variants[0].attrs),
+            Some("Pointing north.".to_string())
+        );
+        assert_eq!(extract_doc_string(&variants[1].attrs), None);
+    }
+
+    #[test]
+    fn extract_doc_from_enum_variant_field() {
+        let source: syn::File = syn::parse_quote! {
+            enum Status {
+                Failed {
+                    /// Error code describing the failure.
+                    error_code: i32,
+                    retry_count: i32,
+                },
+            }
+        };
+        let fields = match &source.items[0] {
+            Item::Enum(e) => match &e.variants[0].fields {
+                Fields::Named(named) => &named.named,
+                _ => panic!("expected named fields"),
+            },
+            _ => panic!("expected enum"),
+        };
+        assert_eq!(
+            extract_doc_string(&fields[0].attrs),
+            Some("Error code describing the failure.".to_string())
+        );
+        assert_eq!(extract_doc_string(&fields[1].attrs), None);
     }
 }

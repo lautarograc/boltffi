@@ -1,4 +1,4 @@
-{%- if throws %}
+{{ self::kdoc_block(doc, "") }}{%- if throws %}
 @Throws({{ err_type }}::class)
 {%- endif %}
 suspend fun {{ method_name }}({% for param in signature_params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match return_type %}{% when Some with (ret) %}: {{ ret }}{% when None %}{% endmatch %} = riffCallAsync(

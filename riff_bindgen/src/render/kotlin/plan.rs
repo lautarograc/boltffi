@@ -45,6 +45,7 @@ pub struct KotlinEnum {
     pub class_name: String,
     pub variants: Vec<KotlinEnumVariant>,
     pub kind: KotlinEnumKind,
+    pub doc: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -69,6 +70,7 @@ pub struct KotlinEnumVariant {
     pub name: String,
     pub tag: i64,
     pub fields: Vec<KotlinEnumField>,
+    pub doc: Option<String>,
 }
 
 #[derive(Clone)]
@@ -115,6 +117,7 @@ pub struct KotlinRecord {
     pub fields: Vec<KotlinRecordField>,
     pub is_blittable: bool,
     pub struct_size: usize,
+    pub doc: Option<String>,
 }
 
 #[derive(Clone)]
@@ -129,6 +132,7 @@ pub struct KotlinRecordField {
     pub wire_size_expr: String,
     pub wire_encode: String,
     pub padding_after: usize,
+    pub doc: Option<String>,
 }
 
 impl KotlinRecordField {
@@ -206,6 +210,7 @@ pub struct KotlinFunction {
     pub async_call: Option<KotlinAsyncCall>,
     pub decode_expr: String,
     pub is_blittable_return: bool,
+    pub doc: Option<String>,
 }
 
 impl KotlinFunction {
@@ -242,6 +247,7 @@ pub struct KotlinConstructor {
     pub wire_writer_closes: Vec<String>,
     pub native_args: Vec<String>,
     pub ffi_name: String,
+    pub doc: Option<String>,
 }
 
 #[derive(Clone)]
@@ -343,6 +349,7 @@ pub struct KotlinCallbackMethod {
     pub ffi_name: String,
     pub params: Vec<KotlinCallbackParam>,
     pub return_info: Option<KotlinCallbackReturn>,
+    pub doc: Option<String>,
 }
 
 #[derive(Clone)]
@@ -352,6 +359,7 @@ pub struct KotlinAsyncCallbackMethod {
     pub invoker_name: String,
     pub params: Vec<KotlinCallbackParam>,
     pub return_info: Option<KotlinCallbackReturn>,
+    pub doc: Option<String>,
 }
 
 #[derive(Clone)]

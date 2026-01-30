@@ -1,6 +1,6 @@
-public enum {{ class_name }}: Int32, Hashable, Sendable, CaseIterable{% if is_error %}, Error{% endif %} {
+{{ self::swift_doc_block(doc, "") }}public enum {{ class_name }}: Int32, Hashable, Sendable, CaseIterable{% if is_error %}, Error{% endif %} {
 {%- for variant in variants %}
-    case {{ variant.swift_name }} = {{ variant.discriminant }}
+{{ self::swift_doc_block(variant.doc, "    ") }}    case {{ variant.swift_name }} = {{ variant.discriminant }}
 {%- endfor %}
 
     @usableFromInline init(fromC c: Int32) { self = {{ class_name }}(rawValue: c)! }

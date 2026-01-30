@@ -5,6 +5,25 @@ use super::plan::{
     SwiftStreamMode, SwiftVariant,
 };
 
+pub fn swift_doc_block(doc: &Option<String>, indent: &str) -> String {
+    match doc {
+        Some(text) => {
+            let lines: String = text
+                .lines()
+                .map(|line| {
+                    if line.is_empty() {
+                        format!("{indent}///\n")
+                    } else {
+                        format!("{indent}/// {line}\n")
+                    }
+                })
+                .collect();
+            lines
+        }
+        None => String::new(),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "preamble.txt", escape = "none")]
 pub struct PreambleTemplate<'a> {
@@ -48,6 +67,7 @@ pub struct RecordTemplate<'a> {
     pub fields: &'a [SwiftField],
     pub is_blittable: bool,
     pub blittable_size: Option<usize>,
+    pub doc: &'a Option<String>,
 }
 
 impl<'a> RecordTemplate<'a> {
@@ -57,6 +77,7 @@ impl<'a> RecordTemplate<'a> {
             fields: &record.fields,
             is_blittable: record.is_blittable,
             blittable_size: record.blittable_size,
+            doc: &record.doc,
         }
     }
 }
@@ -67,6 +88,7 @@ pub struct EnumCStyleTemplate<'a> {
     pub class_name: &'a str,
     pub variants: &'a [SwiftVariant],
     pub is_error: bool,
+    pub doc: &'a Option<String>,
 }
 
 impl<'a> EnumCStyleTemplate<'a> {
@@ -75,6 +97,7 @@ impl<'a> EnumCStyleTemplate<'a> {
             class_name: &e.name,
             variants: &e.variants,
             is_error: e.is_error,
+            doc: &e.doc,
         }
     }
 }
@@ -85,6 +108,7 @@ pub struct EnumDataTemplate<'a> {
     pub class_name: &'a str,
     pub variants: &'a [SwiftVariant],
     pub is_error: bool,
+    pub doc: &'a Option<String>,
 }
 
 impl<'a> EnumDataTemplate<'a> {
@@ -93,6 +117,7 @@ impl<'a> EnumDataTemplate<'a> {
             class_name: &e.name,
             variants: &e.variants,
             is_error: e.is_error,
+            doc: &e.doc,
         }
     }
 }
@@ -437,6 +462,7 @@ mod tests {
             default_expr: default_expr.map(|s| s.to_string()),
             decode,
             encode,
+            doc: None,
             c_offset,
         }
     }
@@ -465,6 +491,7 @@ mod tests {
             ],
             is_blittable: true,
             blittable_size: Some(16),
+            doc: None,
         };
         insta::assert_snapshot!(render_record(&record));
     }
@@ -501,6 +528,7 @@ mod tests {
             ],
             is_blittable: true,
             blittable_size: Some(12),
+            doc: None,
         };
         insta::assert_snapshot!(render_record(&record));
     }
@@ -529,6 +557,7 @@ mod tests {
             ],
             is_blittable: false,
             blittable_size: None,
+            doc: None,
         };
         insta::assert_snapshot!(render_record(&record));
     }
@@ -557,8 +586,71 @@ mod tests {
             ],
             is_blittable: true,
             blittable_size: Some(12),
+            doc: None,
         };
         insta::assert_snapshot!(render_record(&record));
+    }
+
+    #[test]
+    fn snapshot_record_with_field_docs() {
+        let record = SwiftRecord {
+            class_name: "Location".to_string(),
+            fields: vec![
+                {
+                    let mut f = field(
+                        "id",
+                        "Int64",
+                        read_primitive(PrimitiveType::I64, offset_plus("offset", 0)),
+                        write_primitive(PrimitiveType::I64, "id"),
+                        Some(0),
+                        None,
+                    );
+                    f.doc = Some("Unique identifier for this location.".to_string());
+                    f
+                },
+                {
+                    let mut f = field(
+                        "lat",
+                        "Double",
+                        read_primitive(PrimitiveType::F64, offset_plus("offset", 8)),
+                        write_primitive(PrimitiveType::F64, "lat"),
+                        Some(8),
+                        None,
+                    );
+                    f.doc = Some("Latitude in decimal degrees.".to_string());
+                    f
+                },
+            ],
+            is_blittable: true,
+            blittable_size: Some(16),
+            doc: Some("A physical location with coordinates.".to_string()),
+        };
+        insta::assert_snapshot!(render_record(&record));
+    }
+
+    #[test]
+    fn snapshot_enum_with_variant_docs() {
+        let e = SwiftEnum {
+            name: "Direction".to_string(),
+            style: SwiftEnumStyle::CStyle,
+            is_error: false,
+            variants: vec![
+                SwiftVariant {
+                    swift_name: "north".to_string(),
+                    discriminant: 0,
+                    payload: SwiftVariantPayload::Unit,
+                    doc: Some("Pointing toward the north pole.".to_string()),
+                },
+                SwiftVariant {
+                    swift_name: "south".to_string(),
+                    discriminant: 1,
+                    payload: SwiftVariantPayload::Unit,
+                    doc: None,
+                },
+            ],
+            doc: Some("A cardinal compass direction.".to_string()),
+        };
+        insta::assert_snapshot!(render_enum(&e));
     }
 
     #[test]
@@ -572,16 +664,19 @@ mod tests {
                     swift_name: "active".to_string(),
                     discriminant: 0,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "inactive".to_string(),
                     discriminant: 1,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "pending".to_string(),
                     discriminant: 2,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
             ],
             doc: None,
@@ -600,16 +695,19 @@ mod tests {
                     swift_name: "notFound".to_string(),
                     discriminant: 0,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "unauthorized".to_string(),
                     discriminant: 1,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "serverError".to_string(),
                     discriminant: 2,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
             ],
             doc: None,
@@ -628,6 +726,7 @@ mod tests {
                     swift_name: "empty".to_string(),
                     discriminant: 0,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "text".to_string(),
@@ -640,6 +739,7 @@ mod tests {
                         None,
                         None,
                     )]),
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "number".to_string(),
@@ -652,6 +752,7 @@ mod tests {
                         None,
                         None,
                     )]),
+                    doc: None,
                 },
             ],
             doc: None,
@@ -687,6 +788,7 @@ mod tests {
                             None,
                         ),
                     ]),
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "keyPress".to_string(),
@@ -699,6 +801,7 @@ mod tests {
                         None,
                         None,
                     )]),
+                    doc: None,
                 },
             ],
             doc: None,
@@ -839,6 +942,7 @@ mod tests {
                 returns: SwiftReturn::Void,
                 is_async: false,
                 has_out_param: false,
+                doc: None,
             }],
             doc: None,
         };
@@ -872,10 +976,56 @@ mod tests {
                 },
                 is_async: false,
                 has_out_param: true,
+                doc: None,
             }],
             doc: None,
         };
         insta::assert_snapshot!(render_callback(&callback));
+    }
+
+    #[test]
+    fn snapshot_class_with_documented_constructors_and_method() {
+        let cls = SwiftClass {
+            name: "DataStore".to_string(),
+            ffi_free: "riff_data_store_free".to_string(),
+            constructors: vec![
+                SwiftConstructor::Designated {
+                    ffi_symbol: "riff_data_store_new".to_string(),
+                    params: vec![SwiftParam {
+                        label: None,
+                        name: "capacity".to_string(),
+                        swift_type: "Int32".to_string(),
+                        conversion: SwiftConversion::Direct,
+                    }],
+                    is_fallible: false,
+                    doc: Some("Creates a new data store with the given capacity.".to_string()),
+                },
+                SwiftConstructor::Factory {
+                    name: "withDefaults".to_string(),
+                    ffi_symbol: "riff_data_store_with_defaults".to_string(),
+                    is_fallible: false,
+                    doc: Some("Creates a data store with sensible default settings.".to_string()),
+                },
+            ],
+            methods: vec![SwiftMethod {
+                name: "insert".to_string(),
+                mode: SwiftCallMode::Sync {
+                    symbol: "riff_data_store_insert".to_string(),
+                },
+                params: vec![SwiftParam {
+                    label: None,
+                    name: "key".to_string(),
+                    swift_type: "String".to_string(),
+                    conversion: SwiftConversion::ToString,
+                }],
+                returns: SwiftReturn::Void,
+                is_static: false,
+                doc: Some("Inserts a value into the store by key.".to_string()),
+            }],
+            streams: vec![],
+            doc: Some("A persistent key-value data store.".to_string()),
+        };
+        insta::assert_snapshot!(render_class(&cls, "riff"));
     }
 
     #[test]
@@ -1088,6 +1238,7 @@ mod tests {
                 returns: SwiftReturn::Void,
                 is_async: true,
                 has_out_param: false,
+                doc: None,
             }],
             doc: None,
         };
@@ -1118,6 +1269,7 @@ mod tests {
             ],
             is_blittable: false,
             blittable_size: None,
+            doc: None,
         };
         insta::assert_snapshot!(render_record(&record));
     }
@@ -1156,6 +1308,7 @@ mod tests {
             ],
             is_blittable: false,
             blittable_size: None,
+            doc: None,
         };
         insta::assert_snapshot!(render_record(&record));
     }
@@ -1229,11 +1382,13 @@ mod tests {
                         None,
                         None,
                     )]),
+                    doc: None,
                 },
                 SwiftVariant {
                     swift_name: "notFound".to_string(),
                     discriminant: 1,
                     payload: SwiftVariantPayload::Unit,
+                    doc: None,
                 },
             ],
             style: SwiftEnumStyle::Data,
