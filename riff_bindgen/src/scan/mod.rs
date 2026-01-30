@@ -16,57 +16,61 @@ use crate::model::{
 
 mod compiler_type_resolution;
 
+pub enum TypeKind {
+    Record,
+    Enum,
+    Class,
+    Custom(MType),
+}
+
+pub struct TypeMeta {
+    pub kind: TypeKind,
+    pub doc: Option<String>,
+}
+
 #[derive(Default)]
 pub struct TypeRegistry {
-    enums: HashSet<String>,
-    records: HashSet<String>,
-    classes: HashSet<String>,
-    custom_types: HashMap<String, MType>,
+    types: HashMap<String, TypeMeta>,
 }
 
 impl TypeRegistry {
     pub fn is_enum(&self, name: &str) -> bool {
-        self.enums.contains(name)
+        self.types
+            .get(name)
+            .is_some_and(|meta| matches!(meta.kind, TypeKind::Enum))
     }
 
-    pub fn register_enum(&mut self, name: String) {
-        self.enums.insert(name);
+    pub fn contains(&self, name: &str) -> bool {
+        self.types.contains_key(name)
     }
 
-    pub fn register_record(&mut self, name: String) {
-        self.records.insert(name);
+    pub fn doc(&self, name: &str) -> Option<&str> {
+        self.types
+            .get(name)
+            .and_then(|meta| meta.doc.as_deref())
     }
 
-    pub fn register_class(&mut self, name: String) {
-        self.classes.insert(name);
+    pub fn register(&mut self, name: String, meta: TypeMeta) {
+        self.types.insert(name, meta);
     }
 
-    pub fn register_custom_type(&mut self, name: String, repr: MType) {
-        self.custom_types.insert(name, repr);
+    pub fn set_doc(&mut self, name: &str, doc: String) {
+        if let Some(meta) = self.types.get_mut(name) {
+            meta.doc = Some(doc);
+        }
     }
 
-    // custom types are checked first because they shadow the underlying
-    // primitive. a type named "UtcDateTime" registered as custom with
-    // repr i64 must resolve to Custom, not fall through to enum/record.
     pub fn classify_named_type(&self, name: &str) -> Option<MType> {
-        if let Some(repr) = self.custom_types.get(name) {
-            return Some(MType::Custom {
+        let meta = self.types.get(name)?;
+        Some(match &meta.kind {
+            TypeKind::Custom(repr) => MType::Custom {
                 name: name.to_string(),
                 repr: Box::new(repr.clone()),
-            });
-        }
-
-        if self.enums.contains(name) {
-            return Some(MType::Enum(name.to_string()));
-        }
-
-        if self.records.contains(name) {
-            return Some(MType::Record(name.to_string()));
-        }
-
-        self.classes
-            .contains(name)
-            .then(|| MType::Object(name.to_string()))
+            },
+            TypeKind::Enum => MType::Enum(name.to_string()),
+            TypeKind::Record => MType::Record(name.to_string()),
+            TypeKind::Class => MType::Object(name.to_string()),
+        })
     }
 }
 
@@ -216,6 +220,7 @@ pub struct SourceScanner {
 
 struct ScannedClass {
     name: String,
+    doc: Option<String>,
     methods: Vec<ScannedMethod>,
     streams: Vec<ScannedStream>,
     constructors: Vec<ScannedConstructor>,
@@ -223,12 +228,14 @@ struct ScannedClass {
 
 struct ScannedConstructor {
     name: String,
+    doc: Option<String>,
     is_fallible: bool,
     params: Vec<(String, MType)>,
 }
 
 struct ScannedMethod {
     name: String,
+    doc: Option<String>,
     receiver: Receiver,
     params: Vec<(String, MType)>,
     output: Option<MType>,
@@ -237,29 +244,34 @@ struct ScannedMethod {
 
 struct ScannedStream {
     name: String,
+    doc: Option<String>,
     item_type: MType,
     mode: StreamMode,
 }
 
 struct ScannedRecord {
     name: String,
+    doc: Option<String>,
     fields: Vec<(String, MType)>,
 }
 
 struct ScannedEnum {
     name: String,
+    doc: Option<String>,
     variants: Vec<ScannedVariant>,
     is_error: bool,
 }
 
 struct ScannedVariant {
     name: String,
+    doc: Option<String>,
     discriminant: Option<i64>,
     fields: Vec<(String, MType)>,
 }
 
 struct ScannedFunction {
     name: String,
+    doc: Option<String>,
     params: Vec<(String, MType)>,
     output: Option<MType>,
     is_async: bool,
@@ -267,6 +279,7 @@ struct ScannedFunction {
 
 struct ScannedCallbackTrait {
     name: String,
+    doc: Option<String>,
     methods: Vec<ScannedTraitMethod>,
 }
 
@@ -277,6 +290,7 @@ struct ScannedCustomType {
 
 struct ScannedTraitMethod {
     name: String,
+    doc: Option<String>,
     params: Vec<(String, MType)>,
     output: Option<MType>,
     is_async: bool,
@@ -684,10 +698,7 @@ impl SourceScanner {
             .map_err(|e| format!("custom_type!: failed to parse: {e}"))?;
 
         let name = spec.name.to_string();
-        if self.type_registry.records.contains(&name)
-            || self.type_registry.enums.contains(&name)
-            || self.type_registry.classes.contains(&name)
-        {
+        if self.type_registry.contains(&name) {
             return Err(format!(
                 "custom_type!: `{}` conflicts with an existing record/enum/class name",
                 name
@@ -710,8 +721,13 @@ impl SourceScanner {
             )
         })?;
 
-        self.type_registry
-            .register_custom_type(name.clone(), repr.clone());
+        self.type_registry.register(
+            name.clone(),
+            TypeMeta {
+                kind: TypeKind::Custom(repr.clone()),
+                doc: extract_doc_string(&item_macro.attrs),
+            },
+        );
         self.custom_types.push(ScannedCustomType { name, repr });
         Ok(())
     }
@@ -725,10 +741,7 @@ impl SourceScanner {
             return Err("custom_ffi: unsupported self type".to_string());
         };
 
-        if self.type_registry.records.contains(&name)
-            || self.type_registry.enums.contains(&name)
-            || self.type_registry.classes.contains(&name)
-        {
+        if self.type_registry.contains(&name) {
             return Err(format!(
                 "custom_ffi: `{}` conflicts with an existing record/enum/class name",
                 name
@@ -760,8 +773,13 @@ impl SourceScanner {
             )
         })?;
 
-        self.type_registry
-            .register_custom_type(name.clone(), repr.clone());
+        self.type_registry.register(
+            name.clone(),
+            TypeMeta {
+                kind: TypeKind::Custom(repr.clone()),
+                doc: extract_doc_string(&item_impl.attrs),
+            },
+        );
         self.custom_types.push(ScannedCustomType { name, repr });
 
         Ok(())
@@ -783,8 +801,13 @@ impl SourceScanner {
                         || (has_attribute(&item_struct.attrs, "derive")
                             && has_ffi_type_derive(&item_struct.attrs))
                     {
-                        self.type_registry
-                            .register_record(item_struct.ident.to_string());
+                        self.type_registry.register(
+                            item_struct.ident.to_string(),
+                            TypeMeta {
+                                kind: TypeKind::Record,
+                                doc: extract_doc_string(&item_struct.attrs),
+                            },
+                        );
                     }
                 }
                 Item::Enum(item_enum) => {
@@ -792,8 +815,13 @@ impl SourceScanner {
                         || has_attribute(&item_enum.attrs, "data")
                         || has_attribute(&item_enum.attrs, "error")
                     {
-                        self.type_registry
-                            .register_enum(item_enum.ident.to_string());
+                        self.type_registry.register(
+                            item_enum.ident.to_string(),
+                            TypeMeta {
+                                kind: TypeKind::Enum,
+                                doc: extract_doc_string(&item_enum.attrs),
+                            },
+                        );
                     }
                 }
                 Item::Impl(item_impl) => {
@@ -802,7 +830,13 @@ impl SourceScanner {
                         && let Type::Path(type_path) = item_impl.self_ty.as_ref()
                         && let Some(seg) = type_path.path.segments.last()
                     {
-                        self.type_registry.register_class(seg.ident.to_string());
+                        self.type_registry.register(
+                            seg.ident.to_string(),
+                            TypeMeta {
+                                kind: TypeKind::Class,
+                                doc: None,
+                            },
+                        );
                     }
                 }
                 _ => {}
@@ -829,6 +863,10 @@ impl SourceScanner {
     fn process_item(&mut self, item: &Item) {
         match item {
             Item::Struct(item_struct) => {
+                if let Some(doc) = extract_doc_string(&item_struct.attrs) {
+                    self.type_registry
+                        .set_doc(&item_struct.ident.to_string(), doc);
+                }
                 if has_attribute(&item_struct.attrs, "ffi_record")
                     || has_attribute(&item_struct.attrs, "data")
                     || has_repr_c(&item_struct.attrs)
@@ -893,11 +931,13 @@ impl SourceScanner {
             _ => Vec::new(),
         };
 
-        self.records.push(ScannedRecord { name, fields });
+        let doc = extract_doc_string(&item_struct.attrs);
+        self.records.push(ScannedRecord { name, doc, fields });
     }
 
     fn process_enum(&mut self, item_enum: &ItemEnum, is_error: bool) {
         let name = item_enum.ident.to_string();
+        let doc = extract_doc_string(&item_enum.attrs);
         let mut next_discriminant: i64 = 0;
 
         let variants: Vec<ScannedVariant> = item_enum
@@ -948,6 +988,7 @@ impl SourceScanner {
 
                 ScannedVariant {
                     name: variant_name,
+                    doc: extract_doc_string(&v.attrs),
                     discriminant: Some(discriminant),
                     fields,
                 }
@@ -956,6 +997,7 @@ impl SourceScanner {
 
         self.enums.push(ScannedEnum {
             name,
+            doc,
             variants,
             is_error,
         });
@@ -1017,8 +1059,10 @@ impl SourceScanner {
             }
         };
 
+        let doc = extract_doc_string(&item_fn.attrs);
         self.functions.push(ScannedFunction {
             name,
+            doc,
             params,
             output,
             is_async,
@@ -1027,6 +1071,7 @@ impl SourceScanner {
 
     fn process_callback_trait(&mut self, item_trait: &ItemTrait) {
         let name = item_trait.ident.to_string();
+        let doc = extract_doc_string(&item_trait.attrs);
         let mut methods = Vec::new();
 
         for item in &item_trait.items {
@@ -1038,7 +1083,7 @@ impl SourceScanner {
         }
 
         self.callback_traits
-            .push(ScannedCallbackTrait { name, methods });
+            .push(ScannedCallbackTrait { name, doc, methods });
     }
 
     fn process_trait_method(&self, method: &syn::TraitItemFn) -> Option<ScannedTraitMethod> {
@@ -1080,8 +1125,10 @@ impl SourceScanner {
             ),
         };
 
+        let doc = extract_doc_string(&method.attrs);
         Some(ScannedTraitMethod {
             name,
+            doc,
             params,
             output,
             is_async,
@@ -1093,8 +1140,10 @@ impl SourceScanner {
             return;
         };
 
+        let doc = self.type_registry.doc(&class_name).map(str::to_string);
         let mut class = ScannedClass {
             name: class_name.clone(),
+            doc,
             methods: Vec::new(),
             streams: Vec::new(),
             constructors: Vec::new(),
@@ -1201,8 +1250,10 @@ impl SourceScanner {
             ),
         };
 
+        let doc = extract_doc_string(&method.attrs);
         Some(ScannedMethod {
             name,
+            doc,
             receiver,
             params,
             output,
@@ -1220,8 +1271,10 @@ impl SourceScanner {
             &self.compiler_canonical_types,
         )?;
 
+        let doc = extract_doc_string(&method.attrs);
         Some(ScannedStream {
             name,
+            doc,
             item_type,
             mode,
         })
@@ -1280,8 +1333,10 @@ impl SourceScanner {
             })
             .collect::<Option<Vec<_>>>()?;
 
+        let doc = extract_doc_string(&method.attrs);
         Some(ScannedConstructor {
             name,
+            doc,
             is_fallible,
             params,
         })
@@ -1297,6 +1352,9 @@ impl SourceScanner {
 
         for record in self.records {
             let mut r = Record::new(&record.name);
+            if let Some(doc) = record.doc {
+                r = r.with_doc(doc);
+            }
             for (name, ty) in record.fields {
                 r = r.with_field(RecordField::new(&name, ty));
             }
@@ -1305,11 +1363,17 @@ impl SourceScanner {
 
         for scanned_enum in self.enums {
             let mut e = Enumeration::new(&scanned_enum.name);
+            if let Some(doc) = scanned_enum.doc {
+                e = e.with_doc(doc);
+            }
             if scanned_enum.is_error {
                 e = e.as_error();
             }
             for variant in scanned_enum.variants {
                 let mut v = Variant::new(&variant.name);
+                if let Some(doc) = variant.doc {
+                    v = v.with_doc(doc);
+                }
                 if let Some(d) = variant.discriminant {
                     v = v.with_discriminant(d);
                 }
@@ -1323,6 +1387,9 @@ impl SourceScanner {
 
         for function in self.functions {
             let mut f = Function::new(&function.name);
+            if let Some(doc) = function.doc {
+                f = f.with_doc(doc);
+            }
             for (name, ty) in function.params {
                 f = f.with_param(Parameter::new(&name, ty));
             }
@@ -1341,11 +1408,17 @@ impl SourceScanner {
 
         for class in self.classes {
             let mut c = Class::new(&class.name);
+            if let Some(doc) = class.doc {
+                c = c.with_doc(doc);
+            }
 
             for ctor in class.constructors {
                 let mut constructor = Constructor::new()
                     .with_name(&ctor.name)
                     .with_fallible(ctor.is_fallible);
+                if let Some(doc) = ctor.doc {
+                    constructor = constructor.with_doc(doc);
+                }
                 for (name, ty) in ctor.params {
                     constructor = constructor.with_param(ConstructorParam::new(&name, ty));
                 }
@@ -1354,6 +1427,9 @@ impl SourceScanner {
 
             for method in class.methods {
                 let mut m = Method::new(&method.name, method.receiver);
+                if let Some(doc) = method.doc {
+                    m = m.with_doc(doc);
+                }
                 for (name, ty) in method.params {
                     m = m.with_param(Parameter::new(&name, ty));
                 }
@@ -1371,7 +1447,11 @@ impl SourceScanner {
             }
 
             for stream in class.streams {
-                let s = StreamMethod::new(&stream.name, stream.item_type).with_mode(stream.mode);
+                let mut s =
+                    StreamMethod::new(&stream.name, stream.item_type).with_mode(stream.mode);
+                if let Some(doc) = stream.doc {
+                    s = s.with_doc(doc);
+                }
                 c = c.with_stream(s);
             }
 
@@ -1380,9 +1460,15 @@ impl SourceScanner {
 
         for callback_trait in self.callback_traits {
             let mut ct = CallbackTrait::new(&callback_trait.name);
+            if let Some(doc) = callback_trait.doc {
+                ct = ct.with_doc(doc);
+            }
 
             for method in callback_trait.methods {
                 let mut tm = TraitMethod::new(&method.name);
+                if let Some(doc) = method.doc {
+                    tm = tm.with_doc(doc);
+                }
                 for (name, ty) in method.params {
                     tm = tm.with_param(TraitMethodParam::new(&name, ty));
                 }
@@ -1460,6 +1546,44 @@ fn has_attribute(attrs: &[Attribute], name: &str) -> bool {
                 .last()
                 .is_some_and(|segment| segment.ident == name)
     })
+}
+
+fn extract_doc_string(attrs: &[Attribute]) -> Option<String> {
+    let lines: Vec<String> = attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .filter_map(|attr| match &attr.meta {
+            syn::Meta::NameValue(nv) => {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    Some(s.value())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    let joined = lines
+        .iter()
+        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let trimmed = joined.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn return_type_is_self(ty: &Type, class_name: &str) -> bool {
@@ -1951,4 +2075,157 @@ pub fn scan_crate(crate_path: &Path, module_name: &str) -> Result<Module, String
     let mut scanner = SourceScanner::new(module_name);
     scanner.scan_directory(crate_path, &src_path)?;
     Ok(scanner.into_module())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_doc_from_single_line() {
+        let source: syn::File = syn::parse_quote! {
+            /// A point in 2D space.
+            struct Point;
+        };
+        let attrs = match &source.items[0] {
+            Item::Struct(s) => &s.attrs,
+            _ => panic!("expected struct"),
+        };
+        assert_eq!(
+            extract_doc_string(attrs),
+            Some("A point in 2D space.".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_doc_from_multiple_lines() {
+        let source: syn::File = syn::parse_quote! {
+            /// First line.
+            /// Second line.
+            /// Third line.
+            struct Widget;
+        };
+        let attrs = match &source.items[0] {
+            Item::Struct(s) => &s.attrs,
+            _ => panic!("expected struct"),
+        };
+        assert_eq!(
+            extract_doc_string(attrs),
+            Some("First line.\nSecond line.\nThird line.".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_doc_returns_none_for_undocumented() {
+        let source: syn::File = syn::parse_quote! {
+            struct Bare;
+        };
+        let attrs = match &source.items[0] {
+            Item::Struct(s) => &s.attrs,
+            _ => panic!("expected struct"),
+        };
+        assert_eq!(extract_doc_string(attrs), None);
+    }
+
+    #[test]
+    fn extract_doc_trims_empty_lines() {
+        let source: syn::File = syn::parse_quote! {
+            ///
+            /// Actual content.
+            ///
+            struct Padded;
+        };
+        let attrs = match &source.items[0] {
+            Item::Struct(s) => &s.attrs,
+            _ => panic!("expected struct"),
+        };
+        let doc = extract_doc_string(attrs).unwrap();
+        assert_eq!(doc, "Actual content.");
+    }
+
+    fn meta(kind: TypeKind) -> TypeMeta {
+        TypeMeta { kind, doc: None }
+    }
+
+    fn meta_with_doc(kind: TypeKind, doc: &str) -> TypeMeta {
+        TypeMeta { kind, doc: Some(doc.to_string()) }
+    }
+
+    #[test]
+    fn type_registry_single_map_classify() {
+        let mut reg = TypeRegistry::default();
+        reg.register("Point".into(), meta(TypeKind::Record));
+        reg.register("Color".into(), meta(TypeKind::Enum));
+        reg.register("Sensor".into(), meta(TypeKind::Class));
+        reg.register(
+            "UtcDateTime".into(),
+            meta(TypeKind::Custom(MType::Primitive(Primitive::I64))),
+        );
+
+        assert!(matches!(reg.classify_named_type("Point"), Some(MType::Record(_))));
+        assert!(matches!(reg.classify_named_type("Color"), Some(MType::Enum(_))));
+        assert!(matches!(reg.classify_named_type("Sensor"), Some(MType::Object(_))));
+        assert!(matches!(reg.classify_named_type("UtcDateTime"), Some(MType::Custom { .. })));
+        assert!(reg.classify_named_type("Unknown").is_none());
+    }
+
+    #[test]
+    fn type_registry_is_enum() {
+        let mut reg = TypeRegistry::default();
+        reg.register("Status".into(), meta(TypeKind::Enum));
+        reg.register("Point".into(), meta(TypeKind::Record));
+
+        assert!(reg.is_enum("Status"));
+        assert!(!reg.is_enum("Point"));
+        assert!(!reg.is_enum("Missing"));
+    }
+
+    #[test]
+    fn type_registry_contains() {
+        let mut reg = TypeRegistry::default();
+        reg.register("Point".into(), meta(TypeKind::Record));
+
+        assert!(reg.contains("Point"));
+        assert!(!reg.contains("Nope"));
+    }
+
+    #[test]
+    fn type_registry_doc_at_registration() {
+        let mut reg = TypeRegistry::default();
+        reg.register(
+            "Sensor".into(),
+            meta_with_doc(TypeKind::Class, "A hardware sensor."),
+        );
+
+        assert_eq!(reg.doc("Sensor"), Some("A hardware sensor."));
+    }
+
+    #[test]
+    fn type_registry_set_doc_after_registration() {
+        let mut reg = TypeRegistry::default();
+        reg.register("Sensor".into(), meta(TypeKind::Class));
+        reg.set_doc("Sensor", "A hardware sensor.".into());
+
+        assert_eq!(reg.doc("Sensor"), Some("A hardware sensor."));
+    }
+
+    #[test]
+    fn type_registry_set_doc_ignores_unregistered() {
+        let mut reg = TypeRegistry::default();
+        reg.set_doc("Ghost", "spooky".into());
+
+        assert!(reg.doc("Ghost").is_none());
+    }
+
+    #[test]
+    fn type_registry_custom_type_classifies_correctly() {
+        let mut reg = TypeRegistry::default();
+        reg.register(
+            "Timestamp".into(),
+            meta(TypeKind::Custom(MType::Primitive(Primitive::I64))),
+        );
+
+        assert!(matches!(reg.classify_named_type("Timestamp"), Some(MType::Custom { .. })));
+        assert!(!reg.is_enum("Timestamp"));
+    }
 }

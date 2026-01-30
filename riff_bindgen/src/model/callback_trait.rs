@@ -69,6 +69,11 @@ impl TraitMethod {
         self
     }
 
+    pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
+        self.doc = Some(doc.into());
+        self
+    }
+
     pub fn make_async(mut self) -> Self {
         self.is_async = true;
         self
