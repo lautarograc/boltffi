@@ -57,6 +57,24 @@ impl Function {
         self
     }
 
+    pub fn maybe_doc(self, doc: Option<String>) -> Self {
+        match doc {
+            Some(d) => self.with_doc(d),
+            None => self,
+        }
+    }
+
+    pub fn maybe_async(self, is_async: bool) -> Self {
+        if is_async { self.make_async() } else { self }
+    }
+
+    pub fn maybe_return(self, returns: Option<ReturnType>) -> Self {
+        match returns {
+            Some(r) => self.with_return(r),
+            None => self,
+        }
+    }
+
     pub fn with_deprecated(mut self, deprecation: Deprecation) -> Self {
         self.deprecated = Some(deprecation);
         self

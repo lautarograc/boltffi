@@ -24,6 +24,16 @@ impl ReturnType {
         Self::Fallible { ok, err }
     }
 
+    pub fn from_output(ty: Type) -> Self {
+        match ty.result_types() {
+            Some((ok, err)) => Self::Fallible {
+                ok: ok.clone(),
+                err: err.clone(),
+            },
+            None => Self::value(ty),
+        }
+    }
+
     pub fn is_void(&self) -> bool {
         matches!(self, Self::Void)
     }

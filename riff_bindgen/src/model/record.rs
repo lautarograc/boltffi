@@ -31,6 +31,13 @@ impl Record {
         self
     }
 
+    pub fn maybe_doc(self, doc: Option<String>) -> Self {
+        match doc {
+            Some(d) => self.with_doc(d),
+            None => self,
+        }
+    }
+
     pub fn with_deprecated(mut self, deprecation: Deprecation) -> Self {
         self.deprecated = Some(deprecation);
         self

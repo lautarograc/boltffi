@@ -16,16 +16,34 @@ use crate::model::{
 
 mod compiler_type_resolution;
 
-pub enum TypeKind {
+pub enum PendingKind {
     Record,
     Enum,
     Class,
-    Custom(MType),
+}
+
+pub enum TypeShape {
+    Pending(PendingKind),
+    Record {
+        fields: Vec<RecordField>,
+    },
+    Enum {
+        variants: Vec<Variant>,
+        is_error: bool,
+    },
+    Class {
+        constructors: Vec<Constructor>,
+        methods: Vec<Method>,
+        streams: Vec<StreamMethod>,
+    },
+    Custom {
+        repr: MType,
+    },
 }
 
 pub struct TypeMeta {
-    pub kind: TypeKind,
     pub doc: Option<String>,
+    pub shape: TypeShape,
 }
 
 #[derive(Default)]
@@ -35,9 +53,12 @@ pub struct TypeRegistry {
 
 impl TypeRegistry {
     pub fn is_enum(&self, name: &str) -> bool {
-        self.types
-            .get(name)
-            .is_some_and(|meta| matches!(meta.kind, TypeKind::Enum))
+        self.types.get(name).is_some_and(|meta| {
+            matches!(
+                meta.shape,
+                TypeShape::Pending(PendingKind::Enum) | TypeShape::Enum { .. }
+            )
+        })
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -45,13 +66,17 @@ impl TypeRegistry {
     }
 
     pub fn doc(&self, name: &str) -> Option<&str> {
-        self.types
-            .get(name)
-            .and_then(|meta| meta.doc.as_deref())
+        self.types.get(name).and_then(|meta| meta.doc.as_deref())
     }
 
     pub fn register(&mut self, name: String, meta: TypeMeta) {
         self.types.insert(name, meta);
+    }
+
+    pub fn fill(&mut self, name: &str, shape: TypeShape) {
+        if let Some(meta) = self.types.get_mut(name) {
+            meta.shape = shape;
+        }
     }
 
     pub fn set_doc(&mut self, name: &str, doc: String) {
@@ -60,16 +85,26 @@ impl TypeRegistry {
         }
     }
 
+    pub fn drain(self) -> impl Iterator<Item = (String, TypeMeta)> {
+        self.types.into_iter()
+    }
+
     pub fn classify_named_type(&self, name: &str) -> Option<MType> {
         let meta = self.types.get(name)?;
-        Some(match &meta.kind {
-            TypeKind::Custom(repr) => MType::Custom {
+        Some(match &meta.shape {
+            TypeShape::Pending(PendingKind::Record) | TypeShape::Record { .. } => {
+                MType::Record(name.to_string())
+            }
+            TypeShape::Pending(PendingKind::Enum) | TypeShape::Enum { .. } => {
+                MType::Enum(name.to_string())
+            }
+            TypeShape::Pending(PendingKind::Class) | TypeShape::Class { .. } => {
+                MType::Object(name.to_string())
+            }
+            TypeShape::Custom { repr } => MType::Custom {
                 name: name.to_string(),
                 repr: Box::new(repr.clone()),
             },
-            TypeKind::Enum => MType::Enum(name.to_string()),
-            TypeKind::Record => MType::Record(name.to_string()),
-            TypeKind::Class => MType::Object(name.to_string()),
         })
     }
 }
@@ -207,93 +242,11 @@ impl AliasResolver {
 pub struct SourceScanner {
     module_name: String,
     type_registry: TypeRegistry,
-    classes: Vec<ScannedClass>,
-    records: Vec<ScannedRecord>,
-    enums: Vec<ScannedEnum>,
-    functions: Vec<ScannedFunction>,
-    callback_traits: Vec<ScannedCallbackTrait>,
-    custom_types: Vec<ScannedCustomType>,
+    functions: Vec<Function>,
+    callback_traits: Vec<CallbackTrait>,
     alias_resolver: AliasResolver,
     global_aliases: HashMap<String, Vec<String>>,
     compiler_canonical_types: HashMap<String, String>,
-}
-
-struct ScannedClass {
-    name: String,
-    doc: Option<String>,
-    methods: Vec<ScannedMethod>,
-    streams: Vec<ScannedStream>,
-    constructors: Vec<ScannedConstructor>,
-}
-
-struct ScannedConstructor {
-    name: String,
-    doc: Option<String>,
-    is_fallible: bool,
-    params: Vec<(String, MType)>,
-}
-
-struct ScannedMethod {
-    name: String,
-    doc: Option<String>,
-    receiver: Receiver,
-    params: Vec<(String, MType)>,
-    output: Option<MType>,
-    is_async: bool,
-}
-
-struct ScannedStream {
-    name: String,
-    doc: Option<String>,
-    item_type: MType,
-    mode: StreamMode,
-}
-
-struct ScannedRecord {
-    name: String,
-    doc: Option<String>,
-    fields: Vec<(String, MType)>,
-}
-
-struct ScannedEnum {
-    name: String,
-    doc: Option<String>,
-    variants: Vec<ScannedVariant>,
-    is_error: bool,
-}
-
-struct ScannedVariant {
-    name: String,
-    doc: Option<String>,
-    discriminant: Option<i64>,
-    fields: Vec<(String, MType)>,
-}
-
-struct ScannedFunction {
-    name: String,
-    doc: Option<String>,
-    params: Vec<(String, MType)>,
-    output: Option<MType>,
-    is_async: bool,
-}
-
-struct ScannedCallbackTrait {
-    name: String,
-    doc: Option<String>,
-    methods: Vec<ScannedTraitMethod>,
-}
-
-struct ScannedCustomType {
-    name: String,
-    repr: MType,
-}
-
-struct ScannedTraitMethod {
-    name: String,
-    doc: Option<String>,
-    params: Vec<(String, MType)>,
-    output: Option<MType>,
-    is_async: bool,
 }
 
 impl SourceScanner {
@@ -301,12 +254,8 @@ impl SourceScanner {
         Self {
             module_name: module_name.into(),
             type_registry: TypeRegistry::default(),
-            classes: Vec::new(),
-            records: Vec::new(),
-            enums: Vec::new(),
             functions: Vec::new(),
             callback_traits: Vec::new(),
-            custom_types: Vec::new(),
             alias_resolver: AliasResolver::default(),
             global_aliases: HashMap::new(),
             compiler_canonical_types: HashMap::new(),
@@ -724,11 +673,10 @@ impl SourceScanner {
         self.type_registry.register(
             name.clone(),
             TypeMeta {
-                kind: TypeKind::Custom(repr.clone()),
                 doc: extract_doc_string(&item_macro.attrs),
+                shape: TypeShape::Custom { repr: repr.clone() },
             },
         );
-        self.custom_types.push(ScannedCustomType { name, repr });
         Ok(())
     }
 
@@ -776,11 +724,10 @@ impl SourceScanner {
         self.type_registry.register(
             name.clone(),
             TypeMeta {
-                kind: TypeKind::Custom(repr.clone()),
                 doc: extract_doc_string(&item_impl.attrs),
+                shape: TypeShape::Custom { repr: repr.clone() },
             },
         );
-        self.custom_types.push(ScannedCustomType { name, repr });
 
         Ok(())
     }
@@ -804,8 +751,8 @@ impl SourceScanner {
                         self.type_registry.register(
                             item_struct.ident.to_string(),
                             TypeMeta {
-                                kind: TypeKind::Record,
                                 doc: extract_doc_string(&item_struct.attrs),
+                                shape: TypeShape::Pending(PendingKind::Record),
                             },
                         );
                     }
@@ -818,8 +765,8 @@ impl SourceScanner {
                         self.type_registry.register(
                             item_enum.ident.to_string(),
                             TypeMeta {
-                                kind: TypeKind::Enum,
                                 doc: extract_doc_string(&item_enum.attrs),
+                                shape: TypeShape::Pending(PendingKind::Enum),
                             },
                         );
                     }
@@ -833,8 +780,8 @@ impl SourceScanner {
                         self.type_registry.register(
                             seg.ident.to_string(),
                             TypeMeta {
-                                kind: TypeKind::Class,
                                 doc: None,
+                                shape: TypeShape::Pending(PendingKind::Class),
                             },
                         );
                     }
@@ -910,6 +857,67 @@ impl SourceScanner {
         }
     }
 
+    fn resolve_typed_params(
+        &self,
+        inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>,
+        self_type: Option<&str>,
+    ) -> Option<Vec<(String, MType)>> {
+        let typed: Vec<_> = inputs
+            .iter()
+            .filter_map(|arg| match arg {
+                FnArg::Typed(pat_type) => Some(pat_type),
+                _ => None,
+            })
+            .collect();
+
+        let resolved: Vec<(String, MType)> = typed
+            .iter()
+            .filter_map(|pat_type| {
+                let name = match &*pat_type.pat {
+                    syn::Pat::Ident(ident) => ident.ident.to_string(),
+                    _ => return None,
+                };
+                let ty = rust_type_to_ffi_type(
+                    &pat_type.ty,
+                    &self.type_registry,
+                    &self.alias_resolver,
+                    &self.compiler_canonical_types,
+                    self_type,
+                )?;
+                Some((name, ty))
+            })
+            .collect();
+
+        (resolved.len() == typed.len()).then_some(resolved)
+    }
+
+    fn resolve_output(&self, output: &syn::ReturnType, self_type: Option<&str>) -> Option<MType> {
+        match output {
+            syn::ReturnType::Default => None,
+            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(
+                ty,
+                &self.type_registry,
+                &self.alias_resolver,
+                &self.compiler_canonical_types,
+                self_type,
+            ),
+        }
+    }
+
+    fn extract_receiver(sig: &syn::Signature) -> Receiver {
+        sig.inputs
+            .first()
+            .and_then(|arg| match arg {
+                syn::FnArg::Receiver(r) => Some(if r.mutability.is_some() {
+                    Receiver::RefMut
+                } else {
+                    Receiver::Ref
+                }),
+                _ => None,
+            })
+            .unwrap_or(Receiver::None)
+    }
+
     fn process_record(&mut self, item_struct: &ItemStruct) {
         let name = item_struct.ident.to_string();
         let fields = match &item_struct.fields {
@@ -925,22 +933,20 @@ impl SourceScanner {
                         &self.compiler_canonical_types,
                         None,
                     )?;
-                    Some((field_name, field_type))
+                    Some(RecordField::new(&field_name, field_type))
                 })
                 .collect(),
             _ => Vec::new(),
         };
 
-        let doc = extract_doc_string(&item_struct.attrs);
-        self.records.push(ScannedRecord { name, doc, fields });
+        self.type_registry.fill(&name, TypeShape::Record { fields });
     }
 
     fn process_enum(&mut self, item_enum: &ItemEnum, is_error: bool) {
         let name = item_enum.ident.to_string();
-        let doc = extract_doc_string(&item_enum.attrs);
         let mut next_discriminant: i64 = 0;
 
-        let variants: Vec<ScannedVariant> = item_enum
+        let variants = item_enum
             .variants
             .iter()
             .map(|v| {
@@ -952,7 +958,7 @@ impl SourceScanner {
                     .unwrap_or(next_discriminant);
                 next_discriminant = discriminant + 1;
 
-                let fields: Vec<(String, MType)> = match &v.fields {
+                let fields: Vec<RecordField> = match &v.fields {
                     Fields::Named(named) => named
                         .named
                         .iter()
@@ -965,7 +971,7 @@ impl SourceScanner {
                                 &self.compiler_canonical_types,
                                 None,
                             )?;
-                            Some((field_name, field_type))
+                            Some(RecordField::new(&field_name, field_type))
                         })
                         .collect(),
                     Fields::Unnamed(unnamed) => unnamed
@@ -980,159 +986,78 @@ impl SourceScanner {
                                 &self.compiler_canonical_types,
                                 None,
                             )?;
-                            Some((format!("value_{}", i), field_type))
+                            Some(RecordField::new(format!("value_{i}"), field_type))
                         })
                         .collect(),
                     Fields::Unit => Vec::new(),
                 };
 
-                ScannedVariant {
-                    name: variant_name,
-                    doc: extract_doc_string(&v.attrs),
-                    discriminant: Some(discriminant),
-                    fields,
-                }
+                let variant = Variant::new(&variant_name)
+                    .with_discriminant(discriminant)
+                    .maybe_doc(extract_doc_string(&v.attrs));
+                fields
+                    .into_iter()
+                    .fold(variant, |v, field| v.with_field(field))
             })
             .collect();
 
-        self.enums.push(ScannedEnum {
-            name,
-            doc,
-            variants,
-            is_error,
-        });
+        self.type_registry
+            .fill(&name, TypeShape::Enum { variants, is_error });
     }
 
     fn process_function(&mut self, item_fn: &syn::ItemFn) {
-        let name = item_fn.sig.ident.to_string();
-        let is_async = item_fn.sig.asyncness.is_some();
-
-        let typed_params: Vec<_> = item_fn
-            .sig
-            .inputs
-            .iter()
-            .filter_map(|arg| {
-                if let FnArg::Typed(pat_type) = arg {
-                    Some(pat_type)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let params: Vec<(String, MType)> = typed_params
-            .iter()
-            .filter_map(|pat_type| {
-                let param_name = match &*pat_type.pat {
-                    syn::Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                    _ => return None,
-                };
-                let param_type = rust_type_to_ffi_type(
-                    &pat_type.ty,
-                    &self.type_registry,
-                    &self.alias_resolver,
-                    &self.compiler_canonical_types,
-                    None,
-                )?;
-                Some((param_name, param_type))
-            })
-            .collect();
-
-        if params.len() != typed_params.len() {
+        let sig = &item_fn.sig;
+        let Some(params) = self.resolve_typed_params(&sig.inputs, None) else {
+            return;
+        };
+        let output = self.resolve_output(&sig.output, None);
+        if matches!(sig.output, syn::ReturnType::Type(..)) && output.is_none() {
             return;
         }
 
-        let output = match &item_fn.sig.output {
-            syn::ReturnType::Default => None,
-            syn::ReturnType::Type(_, ty) => {
-                let converted = rust_type_to_ffi_type(
-                    ty,
-                    &self.type_registry,
-                    &self.alias_resolver,
-                    &self.compiler_canonical_types,
-                    None,
-                );
-                if converted.is_none() {
-                    return;
-                }
-                converted
-            }
-        };
+        let function = params
+            .into_iter()
+            .fold(Function::new(sig.ident.to_string()), |f, (name, ty)| {
+                f.with_param(Parameter::new(&name, ty))
+            })
+            .maybe_doc(extract_doc_string(&item_fn.attrs))
+            .maybe_return(output.map(ReturnType::from_output))
+            .maybe_async(sig.asyncness.is_some());
 
-        let doc = extract_doc_string(&item_fn.attrs);
-        self.functions.push(ScannedFunction {
-            name,
-            doc,
-            params,
-            output,
-            is_async,
-        });
+        self.functions.push(function);
     }
 
     fn process_callback_trait(&mut self, item_trait: &ItemTrait) {
         let name = item_trait.ident.to_string();
-        let doc = extract_doc_string(&item_trait.attrs);
-        let mut methods = Vec::new();
 
-        for item in &item_trait.items {
-            if let syn::TraitItem::Fn(method) = item
-                && let Some(scanned_method) = self.process_trait_method(method)
-            {
-                methods.push(scanned_method);
-            }
-        }
+        let callback = item_trait
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::TraitItem::Fn(method) => self.build_trait_method(method),
+                _ => None,
+            })
+            .fold(CallbackTrait::new(&name), |ct, m| ct.with_method(m))
+            .maybe_doc(extract_doc_string(&item_trait.attrs));
 
-        self.callback_traits
-            .push(ScannedCallbackTrait { name, doc, methods });
+        self.callback_traits.push(callback);
     }
 
-    fn process_trait_method(&self, method: &syn::TraitItemFn) -> Option<ScannedTraitMethod> {
-        let name = method.sig.ident.to_string();
-        let is_async = method.sig.asyncness.is_some();
+    fn build_trait_method(&self, method: &syn::TraitItemFn) -> Option<TraitMethod> {
+        let sig = &method.sig;
+        let params = self.resolve_typed_params(&sig.inputs, None)?;
+        let output = self.resolve_output(&sig.output, None);
 
-        let params: Vec<(String, MType)> = method
-            .sig
-            .inputs
-            .iter()
-            .filter_map(|arg| {
-                if let FnArg::Typed(pat_type) = arg {
-                    let param_name = match &*pat_type.pat {
-                        syn::Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
-                        _ => return None,
-                    };
-                    let param_type = rust_type_to_ffi_type(
-                        &pat_type.ty,
-                        &self.type_registry,
-                        &self.alias_resolver,
-                        &self.compiler_canonical_types,
-                        None,
-                    )?;
-                    Some((param_name, param_type))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let output = match &method.sig.output {
-            syn::ReturnType::Default => None,
-            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(
-                ty,
-                &self.type_registry,
-                &self.alias_resolver,
-                &self.compiler_canonical_types,
-                None,
-            ),
-        };
-
-        let doc = extract_doc_string(&method.attrs);
-        Some(ScannedTraitMethod {
-            name,
-            doc,
-            params,
-            output,
-            is_async,
-        })
+        Some(
+            params
+                .into_iter()
+                .fold(TraitMethod::new(sig.ident.to_string()), |tm, (name, ty)| {
+                    tm.with_param(TraitMethodParam::new(&name, ty))
+                })
+                .maybe_doc(extract_doc_string(&method.attrs))
+                .maybe_return(output.map(ReturnType::from_output))
+                .maybe_async(sig.asyncness.is_some()),
+        )
     }
 
     fn process_class(&mut self, item_impl: &ItemImpl) {
@@ -1140,14 +1065,9 @@ impl SourceScanner {
             return;
         };
 
-        let doc = self.type_registry.doc(&class_name).map(str::to_string);
-        let mut class = ScannedClass {
-            name: class_name.clone(),
-            doc,
-            methods: Vec::new(),
-            streams: Vec::new(),
-            constructors: Vec::new(),
-        };
+        let mut constructors = Vec::new();
+        let mut methods = Vec::new();
+        let mut streams = Vec::new();
 
         item_impl
             .items
@@ -1160,108 +1080,54 @@ impl SourceScanner {
             .filter(|method| !has_attribute(&method.attrs, "skip"))
             .for_each(|method| {
                 if has_attribute(&method.attrs, "ffi_stream") {
-                    if let Some(stream) = self.process_stream_method(method) {
-                        class.streams.push(stream);
+                    if let Some(stream) = self.build_stream(method) {
+                        streams.push(stream);
                     }
                     return;
                 }
 
                 if self.is_constructor(method, &class_name) {
-                    if let Some(ctor) = self.process_constructor(method, &class_name) {
-                        class.constructors.push(ctor);
+                    if let Some(ctor) = self.build_constructor(method, &class_name) {
+                        constructors.push(ctor);
                     }
                     return;
                 }
 
-                if let Some(scanned_method) = self.process_method(method, &class_name) {
-                    class.methods.push(scanned_method);
+                if let Some(built_method) = self.build_method(method, &class_name) {
+                    methods.push(built_method);
                 }
             });
 
-        self.classes.push(class);
+        self.type_registry.fill(
+            &class_name,
+            TypeShape::Class {
+                constructors,
+                methods,
+                streams,
+            },
+        );
     }
 
-    fn process_method(
-        &self,
-        method: &syn::ImplItemFn,
-        self_type_name: &str,
-    ) -> Option<ScannedMethod> {
-        let name = method.sig.ident.to_string();
-        let is_async = method.sig.asyncness.is_some();
+    fn build_method(&self, method: &syn::ImplItemFn, self_type_name: &str) -> Option<Method> {
+        let sig = &method.sig;
+        let receiver = Self::extract_receiver(sig);
+        let params = self.resolve_typed_params(&sig.inputs, Some(self_type_name))?;
+        let output = self.resolve_output(&sig.output, Some(self_type_name));
 
-        let receiver = if method.sig.inputs.is_empty() {
-            Receiver::None
-        } else {
-            match method.sig.inputs.first()? {
-                syn::FnArg::Receiver(r) => {
-                    if r.mutability.is_some() {
-                        Receiver::RefMut
-                    } else {
-                        Receiver::Ref
-                    }
-                }
-                _ => Receiver::None,
-            }
-        };
-
-        let typed_params: Vec<_> = method
-            .sig
-            .inputs
-            .iter()
-            .filter_map(|arg| {
-                if let syn::FnArg::Typed(pat_type) = arg {
-                    Some(pat_type)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let params: Vec<(String, MType)> = typed_params
-            .iter()
-            .filter_map(|pat_type| {
-                let param_name = match &*pat_type.pat {
-                    syn::Pat::Ident(ident) => ident.ident.to_string(),
-                    _ => return None,
-                };
-                let param_type = rust_type_to_ffi_type(
-                    &pat_type.ty,
-                    &self.type_registry,
-                    &self.alias_resolver,
-                    &self.compiler_canonical_types,
-                    Some(self_type_name),
-                )?;
-                Some((param_name, param_type))
-            })
-            .collect();
-
-        if params.len() != typed_params.len() {
-            return None;
-        }
-
-        let output = match &method.sig.output {
-            syn::ReturnType::Default => None,
-            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(
-                ty,
-                &self.type_registry,
-                &self.alias_resolver,
-                &self.compiler_canonical_types,
-                Some(self_type_name),
-            ),
-        };
-
-        let doc = extract_doc_string(&method.attrs);
-        Some(ScannedMethod {
-            name,
-            doc,
-            receiver,
-            params,
-            output,
-            is_async,
-        })
+        Some(
+            params
+                .into_iter()
+                .fold(
+                    Method::new(sig.ident.to_string(), receiver),
+                    |m, (name, ty)| m.with_param(Parameter::new(&name, ty)),
+                )
+                .maybe_doc(extract_doc_string(&method.attrs))
+                .maybe_return(output.map(ReturnType::from_output))
+                .maybe_async(sig.asyncness.is_some()),
+        )
     }
 
-    fn process_stream_method(&self, method: &syn::ImplItemFn) -> Option<ScannedStream> {
+    fn build_stream(&self, method: &syn::ImplItemFn) -> Option<StreamMethod> {
         let name = method.sig.ident.to_string();
 
         let (item_type, mode) = extract_stream_attr(
@@ -1271,13 +1137,11 @@ impl SourceScanner {
             &self.compiler_canonical_types,
         )?;
 
-        let doc = extract_doc_string(&method.attrs);
-        Some(ScannedStream {
-            name,
-            doc,
-            item_type,
-            mode,
-        })
+        Some(
+            StreamMethod::new(&name, item_type)
+                .with_mode(mode)
+                .maybe_doc(extract_doc_string(&method.attrs)),
+        )
     }
 
     fn is_constructor(&self, method: &syn::ImplItemFn, class_name: &str) -> bool {
@@ -1299,193 +1163,80 @@ impl SourceScanner {
         }
     }
 
-    fn process_constructor(
+    fn build_constructor(
         &self,
         method: &syn::ImplItemFn,
         self_type_name: &str,
-    ) -> Option<ScannedConstructor> {
-        let name = method.sig.ident.to_string();
-        let is_fallible = match &method.sig.output {
+    ) -> Option<Constructor> {
+        let sig = &method.sig;
+        let is_fallible = match &sig.output {
             syn::ReturnType::Default => false,
             syn::ReturnType::Type(_, ty) => return_type_is_result_self(ty.as_ref(), self_type_name),
         };
+        let params = self.resolve_typed_params(&sig.inputs, Some(self_type_name))?;
 
-        let params: Vec<(String, MType)> = method
-            .sig
-            .inputs
-            .iter()
-            .map(|arg| match arg {
-                syn::FnArg::Typed(pat_type) => {
-                    let param_name = match pat_type.pat.as_ref() {
-                        syn::Pat::Ident(ident) => ident.ident.to_string(),
-                        _ => return None,
-                    };
-                    let param_type = rust_type_to_ffi_type(
-                        &pat_type.ty,
-                        &self.type_registry,
-                        &self.alias_resolver,
-                        &self.compiler_canonical_types,
-                        Some(self_type_name),
-                    )?;
-                    Some((param_name, param_type))
-                }
-                syn::FnArg::Receiver(_) => None,
-            })
-            .collect::<Option<Vec<_>>>()?;
-
-        let doc = extract_doc_string(&method.attrs);
-        Some(ScannedConstructor {
-            name,
-            doc,
-            is_fallible,
-            params,
-        })
+        Some(
+            params
+                .into_iter()
+                .fold(
+                    Constructor::new()
+                        .with_name(sig.ident.to_string())
+                        .with_fallible(is_fallible),
+                    |c, (name, ty)| c.with_param(ConstructorParam::new(&name, ty)),
+                )
+                .maybe_doc(extract_doc_string(&method.attrs)),
+        )
     }
 
     pub fn into_module(self) -> Module {
-        let mut module = self.custom_types.into_iter().fold(
-            Module::new(&self.module_name),
-            |module, custom_type| {
-                module.with_custom_type(CustomType::new(custom_type.name, custom_type.repr))
-            },
-        );
+        let mut module = Module::new(&self.module_name);
 
-        for record in self.records {
-            let mut r = Record::new(&record.name);
-            if let Some(doc) = record.doc {
-                r = r.with_doc(doc);
-            }
-            for (name, ty) in record.fields {
-                r = r.with_field(RecordField::new(&name, ty));
-            }
-            module = module.with_record(r);
-        }
-
-        for scanned_enum in self.enums {
-            let mut e = Enumeration::new(&scanned_enum.name);
-            if let Some(doc) = scanned_enum.doc {
-                e = e.with_doc(doc);
-            }
-            if scanned_enum.is_error {
-                e = e.as_error();
-            }
-            for variant in scanned_enum.variants {
-                let mut v = Variant::new(&variant.name);
-                if let Some(doc) = variant.doc {
-                    v = v.with_doc(doc);
+        for (name, entry) in self.type_registry.drain() {
+            match entry.shape {
+                TypeShape::Record { fields } => {
+                    let record = fields
+                        .into_iter()
+                        .fold(Record::new(&name), |r, f| r.with_field(f))
+                        .maybe_doc(entry.doc);
+                    module = module.with_record(record);
                 }
-                if let Some(d) = variant.discriminant {
-                    v = v.with_discriminant(d);
+                TypeShape::Enum { variants, is_error } => {
+                    let mut enumeration = variants
+                        .into_iter()
+                        .fold(Enumeration::new(&name), |e, v| e.with_variant(v))
+                        .maybe_doc(entry.doc);
+                    if is_error {
+                        enumeration = enumeration.as_error();
+                    }
+                    module = module.with_enum(enumeration);
                 }
-                for (name, ty) in variant.fields {
-                    v = v.with_field(RecordField::new(&name, ty));
+                TypeShape::Class {
+                    constructors,
+                    methods,
+                    streams,
+                } => {
+                    let class = constructors
+                        .into_iter()
+                        .fold(Class::new(&name), |c, ctor| c.with_constructor(ctor));
+                    let class = methods.into_iter().fold(class, |c, m| c.with_method(m));
+                    let class = streams
+                        .into_iter()
+                        .fold(class, |c, s| c.with_stream(s))
+                        .maybe_doc(entry.doc);
+                    module = module.with_class(class);
                 }
-                e = e.with_variant(v);
+                TypeShape::Custom { repr } => {
+                    module = module.with_custom_type(CustomType::new(name, repr));
+                }
+                TypeShape::Pending(_) => {}
             }
-            module = module.with_enum(e);
         }
 
         for function in self.functions {
-            let mut f = Function::new(&function.name);
-            if let Some(doc) = function.doc {
-                f = f.with_doc(doc);
-            }
-            for (name, ty) in function.params {
-                f = f.with_param(Parameter::new(&name, ty));
-            }
-            if let Some(output) = function.output {
-                let returns = match output.result_types() {
-                    Some((ok, err)) => ReturnType::fallible(ok.clone(), err.clone()),
-                    None => ReturnType::value(output),
-                };
-                f = f.with_return(returns);
-            }
-            if function.is_async {
-                f = f.make_async();
-            }
-            module = module.with_function(f);
+            module = module.with_function(function);
         }
-
-        for class in self.classes {
-            let mut c = Class::new(&class.name);
-            if let Some(doc) = class.doc {
-                c = c.with_doc(doc);
-            }
-
-            for ctor in class.constructors {
-                let mut constructor = Constructor::new()
-                    .with_name(&ctor.name)
-                    .with_fallible(ctor.is_fallible);
-                if let Some(doc) = ctor.doc {
-                    constructor = constructor.with_doc(doc);
-                }
-                for (name, ty) in ctor.params {
-                    constructor = constructor.with_param(ConstructorParam::new(&name, ty));
-                }
-                c = c.with_constructor(constructor);
-            }
-
-            for method in class.methods {
-                let mut m = Method::new(&method.name, method.receiver);
-                if let Some(doc) = method.doc {
-                    m = m.with_doc(doc);
-                }
-                for (name, ty) in method.params {
-                    m = m.with_param(Parameter::new(&name, ty));
-                }
-                if let Some(output) = method.output {
-                    let returns = match output.result_types() {
-                        Some((ok, err)) => ReturnType::fallible(ok.clone(), err.clone()),
-                        None => ReturnType::value(output),
-                    };
-                    m = m.with_return(returns);
-                }
-                if method.is_async {
-                    m = m.make_async();
-                }
-                c = c.with_method(m);
-            }
-
-            for stream in class.streams {
-                let mut s =
-                    StreamMethod::new(&stream.name, stream.item_type).with_mode(stream.mode);
-                if let Some(doc) = stream.doc {
-                    s = s.with_doc(doc);
-                }
-                c = c.with_stream(s);
-            }
-
-            module = module.with_class(c);
-        }
-
-        for callback_trait in self.callback_traits {
-            let mut ct = CallbackTrait::new(&callback_trait.name);
-            if let Some(doc) = callback_trait.doc {
-                ct = ct.with_doc(doc);
-            }
-
-            for method in callback_trait.methods {
-                let mut tm = TraitMethod::new(&method.name);
-                if let Some(doc) = method.doc {
-                    tm = tm.with_doc(doc);
-                }
-                for (name, ty) in method.params {
-                    tm = tm.with_param(TraitMethodParam::new(&name, ty));
-                }
-                if let Some(output) = method.output {
-                    let returns = match output.result_types() {
-                        Some((ok, err)) => ReturnType::fallible(ok.clone(), err.clone()),
-                        None => ReturnType::value(output),
-                    };
-                    tm = tm.with_return(returns);
-                }
-                if method.is_async {
-                    tm = tm.make_async();
-                }
-                ct = ct.with_method(tm);
-            }
-
-            module = module.with_callback_trait(ct);
+        for callback in self.callback_traits {
+            module = module.with_callback_trait(callback);
         }
 
         module.collect_derived_types();
@@ -2143,37 +1894,60 @@ mod tests {
         assert_eq!(doc, "Actual content.");
     }
 
-    fn meta(kind: TypeKind) -> TypeMeta {
-        TypeMeta { kind, doc: None }
+    fn pending(kind: PendingKind) -> TypeMeta {
+        TypeMeta {
+            doc: None,
+            shape: TypeShape::Pending(kind),
+        }
     }
 
-    fn meta_with_doc(kind: TypeKind, doc: &str) -> TypeMeta {
-        TypeMeta { kind, doc: Some(doc.to_string()) }
+    fn pending_with_doc(kind: PendingKind, doc: &str) -> TypeMeta {
+        TypeMeta {
+            doc: Some(doc.to_string()),
+            shape: TypeShape::Pending(kind),
+        }
     }
 
     #[test]
     fn type_registry_single_map_classify() {
         let mut reg = TypeRegistry::default();
-        reg.register("Point".into(), meta(TypeKind::Record));
-        reg.register("Color".into(), meta(TypeKind::Enum));
-        reg.register("Sensor".into(), meta(TypeKind::Class));
+        reg.register("Point".into(), pending(PendingKind::Record));
+        reg.register("Color".into(), pending(PendingKind::Enum));
+        reg.register("Sensor".into(), pending(PendingKind::Class));
         reg.register(
             "UtcDateTime".into(),
-            meta(TypeKind::Custom(MType::Primitive(Primitive::I64))),
+            TypeMeta {
+                doc: None,
+                shape: TypeShape::Custom {
+                    repr: MType::Primitive(Primitive::I64),
+                },
+            },
         );
 
-        assert!(matches!(reg.classify_named_type("Point"), Some(MType::Record(_))));
-        assert!(matches!(reg.classify_named_type("Color"), Some(MType::Enum(_))));
-        assert!(matches!(reg.classify_named_type("Sensor"), Some(MType::Object(_))));
-        assert!(matches!(reg.classify_named_type("UtcDateTime"), Some(MType::Custom { .. })));
+        assert!(matches!(
+            reg.classify_named_type("Point"),
+            Some(MType::Record(_))
+        ));
+        assert!(matches!(
+            reg.classify_named_type("Color"),
+            Some(MType::Enum(_))
+        ));
+        assert!(matches!(
+            reg.classify_named_type("Sensor"),
+            Some(MType::Object(_))
+        ));
+        assert!(matches!(
+            reg.classify_named_type("UtcDateTime"),
+            Some(MType::Custom { .. })
+        ));
         assert!(reg.classify_named_type("Unknown").is_none());
     }
 
     #[test]
     fn type_registry_is_enum() {
         let mut reg = TypeRegistry::default();
-        reg.register("Status".into(), meta(TypeKind::Enum));
-        reg.register("Point".into(), meta(TypeKind::Record));
+        reg.register("Status".into(), pending(PendingKind::Enum));
+        reg.register("Point".into(), pending(PendingKind::Record));
 
         assert!(reg.is_enum("Status"));
         assert!(!reg.is_enum("Point"));
@@ -2183,7 +1957,7 @@ mod tests {
     #[test]
     fn type_registry_contains() {
         let mut reg = TypeRegistry::default();
-        reg.register("Point".into(), meta(TypeKind::Record));
+        reg.register("Point".into(), pending(PendingKind::Record));
 
         assert!(reg.contains("Point"));
         assert!(!reg.contains("Nope"));
@@ -2194,7 +1968,7 @@ mod tests {
         let mut reg = TypeRegistry::default();
         reg.register(
             "Sensor".into(),
-            meta_with_doc(TypeKind::Class, "A hardware sensor."),
+            pending_with_doc(PendingKind::Class, "A hardware sensor."),
         );
 
         assert_eq!(reg.doc("Sensor"), Some("A hardware sensor."));
@@ -2203,7 +1977,7 @@ mod tests {
     #[test]
     fn type_registry_set_doc_after_registration() {
         let mut reg = TypeRegistry::default();
-        reg.register("Sensor".into(), meta(TypeKind::Class));
+        reg.register("Sensor".into(), pending(PendingKind::Class));
         reg.set_doc("Sensor", "A hardware sensor.".into());
 
         assert_eq!(reg.doc("Sensor"), Some("A hardware sensor."));
@@ -2222,10 +1996,54 @@ mod tests {
         let mut reg = TypeRegistry::default();
         reg.register(
             "Timestamp".into(),
-            meta(TypeKind::Custom(MType::Primitive(Primitive::I64))),
+            TypeMeta {
+                doc: None,
+                shape: TypeShape::Custom {
+                    repr: MType::Primitive(Primitive::I64),
+                },
+            },
         );
 
-        assert!(matches!(reg.classify_named_type("Timestamp"), Some(MType::Custom { .. })));
+        assert!(matches!(
+            reg.classify_named_type("Timestamp"),
+            Some(MType::Custom { .. })
+        ));
         assert!(!reg.is_enum("Timestamp"));
+    }
+
+    #[test]
+    fn type_registry_fill_replaces_pending() {
+        let mut reg = TypeRegistry::default();
+        reg.register("Point".into(), pending(PendingKind::Record));
+        reg.fill(
+            "Point",
+            TypeShape::Record {
+                fields: vec![RecordField::new("x", MType::Primitive(Primitive::F64))],
+            },
+        );
+
+        assert!(matches!(
+            reg.classify_named_type("Point"),
+            Some(MType::Record(_))
+        ));
+        assert!(matches!(
+            reg.types.get("Point").unwrap().shape,
+            TypeShape::Record { ref fields } if fields.len() == 1
+        ));
+    }
+
+    #[test]
+    fn type_registry_filled_enum_still_is_enum() {
+        let mut reg = TypeRegistry::default();
+        reg.register("Color".into(), pending(PendingKind::Enum));
+        reg.fill(
+            "Color",
+            TypeShape::Enum {
+                variants: vec![],
+                is_error: false,
+            },
+        );
+
+        assert!(reg.is_enum("Color"));
     }
 }
