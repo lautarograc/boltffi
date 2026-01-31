@@ -14,8 +14,9 @@ public final class Cache {
     }
 
     public func get(key: String) -> CacheEntry? {
-        return key.withCString { keyPtr in
-            guard let ptr = riff_cache_get(handle, UnsafeRawPointer(keyPtr).assumingMemoryBound(to: UInt8.self), UInt(key.utf8.count)) else { return nil }
+        var key = key
+        return key.withUTF8 { keyBuf in
+            guard let ptr = riff_cache_get(handle, keyBuf.baseAddress!, UInt(keyBuf.count)) else { return nil }
             return CacheEntry(handle: ptr)
         }
     }

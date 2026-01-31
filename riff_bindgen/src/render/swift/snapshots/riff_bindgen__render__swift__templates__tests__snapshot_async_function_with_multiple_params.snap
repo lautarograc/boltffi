@@ -3,7 +3,9 @@ source: riff_bindgen/src/render/swift/templates.rs
 expression: "render_function(&func, \"riff\")"
 ---
 public func uploadFile(path: String, to destination: String) async throws -> String {
-    let futureHandle = path.withCString { pathPtr in destination.withCString { destinationPtr in riff_upload_file_start(UnsafeRawPointer(pathPtr).assumingMemoryBound(to: UInt8.self), UInt(path.utf8.count), UnsafeRawPointer(destinationPtr).assumingMemoryBound(to: UInt8.self), UInt(destination.utf8.count)) } }
+    var path = path
+    var destination = destination
+    let futureHandle = path.withUTF8 { pathBuf in destination.withUTF8 { destinationBuf in riff_upload_file_start(pathBuf.baseAddress!, UInt(pathBuf.count), destinationBuf.baseAddress!, UInt(destinationBuf.count)) } }
 
     return try await riffAsyncCall(
         futureHandle: futureHandle,

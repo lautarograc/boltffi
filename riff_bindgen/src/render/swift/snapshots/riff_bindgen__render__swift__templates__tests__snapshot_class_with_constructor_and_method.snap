@@ -10,7 +10,8 @@ public final class Database {
     }
 
     public init(path: String) {
-        let ptr = path.withCString { pathPtr -> OpaquePointer? in riff_database_open(UnsafeRawPointer(pathPtr).assumingMemoryBound(to: UInt8.self), UInt(path.utf8.count)) }!
+        var path = path
+        let ptr = path.withUTF8 { pathBuf -> OpaquePointer? in riff_database_open(pathBuf.baseAddress!, UInt(pathBuf.count)) }!
         self.handle = ptr
     }
 
@@ -19,8 +20,9 @@ public final class Database {
     }
 
     public func query(sql: String) -> String {
-        return sql.withCString { sqlPtr in
-            let buf = riff_database_query(handle, UnsafeRawPointer(sqlPtr).assumingMemoryBound(to: UInt8.self), UInt(sql.utf8.count))
+        var sql = sql
+        return sql.withUTF8 { sqlBuf in
+            let buf = riff_database_query(handle, sqlBuf.baseAddress!, UInt(sqlBuf.count))
             defer { riff_free_buf_u8(buf) }
             return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in reader.readString() }
         }

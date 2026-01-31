@@ -28,8 +28,9 @@ public final class DataStore {
 
     /// Inserts a value into the store by key.
     public func insert(key: String) {
-        _ = key.withCString { keyPtr in
-            riff_data_store_insert(handle, UnsafeRawPointer(keyPtr).assumingMemoryBound(to: UInt8.self), UInt(key.utf8.count))
+        var key = key
+        _ = key.withUTF8 { keyBuf in
+            riff_data_store_insert(handle, keyBuf.baseAddress!, UInt(keyBuf.count))
         }
     }
 

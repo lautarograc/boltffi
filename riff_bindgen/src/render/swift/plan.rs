@@ -863,7 +863,7 @@ impl SwiftParam {
         match &self.conversion {
             SwiftConversion::Direct => self.name.clone(),
             SwiftConversion::ToString => format!(
-                "UnsafeRawPointer({}Ptr).assumingMemoryBound(to: UInt8.self), UInt({}.utf8.count)",
+                "{}Buf.baseAddress!, UInt({}Buf.count)",
                 self.name, self.name
             ),
             SwiftConversion::ToData => {
@@ -907,6 +907,9 @@ impl SwiftParam {
 
     pub fn wrapper_code(&self) -> Option<String> {
         match &self.conversion {
+            SwiftConversion::ToString => {
+                Some(format!("var {n} = {n}", n = self.name))
+            }
             SwiftConversion::InlineClosure { closure } => Some(closure.render()),
             SwiftConversion::ToWireBuffer { encode } => {
                 let writer_body = emit::emit_writer_write(encode);
@@ -931,7 +934,7 @@ impl SwiftParam {
     pub fn closure_wrap_open(&self) -> Option<String> {
         match &self.conversion {
             SwiftConversion::ToString => {
-                Some(format!("{}.withCString {{ {}Ptr in", self.name, self.name))
+                Some(format!("{n}.withUTF8 {{ {n}Buf in", n = self.name))
             }
             SwiftConversion::ToData => Some(format!(
                 "{}.withUnsafeBytes {{ {}Ptr in",

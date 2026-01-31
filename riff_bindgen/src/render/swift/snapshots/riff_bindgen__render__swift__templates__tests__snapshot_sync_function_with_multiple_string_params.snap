@@ -3,9 +3,11 @@ source: riff_bindgen/src/render/swift/templates.rs
 expression: "render_function(&func, \"riff\")"
 ---
 public func concat(a: String, b: String) -> String {
-    return a.withCString { aPtr in
-        return b.withCString { bPtr in
-            let buf = riff_concat(UnsafeRawPointer(aPtr).assumingMemoryBound(to: UInt8.self), UInt(a.utf8.count), UnsafeRawPointer(bPtr).assumingMemoryBound(to: UInt8.self), UInt(b.utf8.count))
+    var a = a
+    var b = b
+    return a.withUTF8 { aBuf in
+        return b.withUTF8 { bBuf in
+            let buf = riff_concat(aBuf.baseAddress!, UInt(aBuf.count), bBuf.baseAddress!, UInt(bBuf.count))
             defer { riff_free_buf_u8(buf) }
             return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in reader.readString() }
         }

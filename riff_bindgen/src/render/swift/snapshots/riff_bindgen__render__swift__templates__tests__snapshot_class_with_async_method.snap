@@ -14,7 +14,8 @@ public final class HttpClient {
     }
 
     public func fetch(url: String) async throws -> Data {
-        let futureHandle = url.withCString { urlPtr in riff_http_client_fetch_start(handle, UnsafeRawPointer(urlPtr).assumingMemoryBound(to: UInt8.self), UInt(url.utf8.count)) }
+        var url = url
+        let futureHandle = url.withUTF8 { urlBuf in riff_http_client_fetch_start(handle, urlBuf.baseAddress!, UInt(urlBuf.count)) }
 
         return try await riffAsyncCall(
             futureHandle: futureHandle,
