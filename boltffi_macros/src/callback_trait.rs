@@ -518,9 +518,9 @@ fn expand_method(
             .map(needs_wire_return)
             .unwrap_or(false);
 
-        let out_param = if let Some(ref ret_ty) = return_type {
+        let out_params = if let Some(ref ret_ty) = return_type {
             if wire_return {
-                quote! { out: *mut ::boltffi::__private::FfiBuf<u8>, }
+                quote! { out_ptr: *mut u8, out_len: *mut usize, }
             } else {
                 let ffi_ret = rust_type_to_ffi_param_type(ret_ty);
                 quote! { out: *mut #ffi_ret, }
@@ -533,7 +533,7 @@ fn expand_method(
             pub #method_name_snake: extern "C" fn(
                 handle: u64,
                 #(#param_types,)*
-                #out_param
+                #out_params
                 status: *mut ::boltffi::__private::FfiStatus
             )
         });
@@ -556,21 +556,24 @@ fn expand_method(
                 if wire_return {
                     quote! {
                         #(#prelude_stmts)*
-                        let mut out_buf: ::boltffi::__private::FfiBuf<u8> = Default::default();
+                        const CALLBACK_BUF_SIZE: usize = 4096;
+                        let mut out_buf: [u8; CALLBACK_BUF_SIZE] = [0u8; CALLBACK_BUF_SIZE];
+                        let mut out_len: usize = 0;
                         let mut status = ::boltffi::__private::FfiStatus::default();
                         unsafe {
                             ((*self.vtable).#method_name_snake)(
                                 self.handle,
                                 #(#call_args,)*
-                                &mut out_buf as *mut _,
+                                out_buf.as_mut_ptr(),
+                                &mut out_len,
                                 &mut status
                             );
                         }
                         if status.is_err() {
                             #error_expr
                         }
-                        let out_bytes = out_buf.into_vec();
-                        ::boltffi::__private::wire::decode(&out_bytes).expect("wire decode callback return")
+                        let out_bytes = &out_buf[..out_len];
+                        ::boltffi::__private::wire::decode(out_bytes).expect("wire decode callback return")
                     }
                 } else {
                     quote! {

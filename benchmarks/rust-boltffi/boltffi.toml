@@ -1,0 +1,33 @@
+[package]
+name = "bench_boltffi"
+
+[swift]
+module_name = "BenchBoltFFI"
+output = "bindings/swift"
+tools_version = "5.9"
+
+[kotlin]
+package = "com.example.bench_boltffi"
+output = "bindings/kotlin"
+factory_style = "constructors"
+
+[apple]
+deployment_target = "16.0"
+include_macos = true
+
+[apple.experimental]
+tuple_storage = false
+
+[android]
+min_sdk = 24
+
+[pack.xcframework]
+output = "dist"
+
+[pack.spm]
+output = "dist"
+distribution = "local"  # "local" or "remote"
+# repo_url = "https://github.com/user/repo"  # required for remote
+
+[pack.android]
+output = "dist/jniLibs"

@@ -18,7 +18,7 @@ The result:
 | 1,000 structs | 1,958 ns | 1,195,354 ns | 611x |
 | 10,000 i32 values | 1,291 ns | 1,991,146 ns | 1,542x |
 
-Full benchmark code in [bench_demo](./bench_demo).
+Full benchmark code in [benchmarks](./benchmarks).
 
 ## What it does
 
