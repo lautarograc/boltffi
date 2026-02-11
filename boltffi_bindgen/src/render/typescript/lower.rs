@@ -7,7 +7,7 @@ use crate::ir::abi::{
     ErrorTransport, ParamRole, ReturnTransport,
 };
 use crate::ir::contract::FfiContract;
-use crate::ir::definitions::{EnumDef, FunctionDef, RecordDef};
+use crate::ir::definitions::{EnumDef, FunctionDef, ParamDef, RecordDef};
 use crate::ir::ids::{EnumId, FieldName, RecordId};
 use crate::ir::ops::{ReadOp, ReadSeq, SizeExpr, WireShape, WriteOp, WriteSeq};
 use crate::ir::plan::AbiType;
@@ -220,6 +220,9 @@ impl<'a> TypeScriptLowerer<'a> {
         let func_name = camel_case(def.id.as_str());
         let ffi_name = abi_call.symbol.as_str().to_string();
 
+        let param_defs: HashMap<&str, &ParamDef> =
+            def.params.iter().map(|p| (p.name.as_str(), p)).collect();
+
         let params = abi_call
             .params
             .iter()
@@ -231,7 +234,10 @@ impl<'a> TypeScriptLowerer<'a> {
                         | ParamRole::StatusOut
                 )
             })
-            .map(|param| self.lower_param(param))
+            .map(|abi_param| {
+                let param_def = param_defs.get(abi_param.name.as_str()).copied();
+                self.lower_param(param_def, abi_param)
+            })
             .collect();
 
         let (return_type, return_abi, decode_expr) = self.lower_return(&abi_call.return_);
@@ -250,12 +256,12 @@ impl<'a> TypeScriptLowerer<'a> {
         })
     }
 
-    fn lower_param(&self, param: &AbiParam) -> TsParam {
-        let name = camel_case(param.name.as_str());
-        match &param.role {
+    fn lower_param(&self, param_def: Option<&ParamDef>, abi_param: &AbiParam) -> TsParam {
+        let name = camel_case(abi_param.name.as_str());
+        match &abi_param.role {
             ParamRole::InDirect => TsParam {
                 name: emit::escape_ts_keyword(&name),
-                ts_type: ts_abi_type(&param.ffi_type),
+                ts_type: ts_abi_type(&abi_param.ffi_type),
                 conversion: TsParamConversion::Direct,
             },
             ParamRole::InString { .. } => TsParam {
@@ -267,13 +273,18 @@ impl<'a> TypeScriptLowerer<'a> {
                 encode_ops,
                 decode_ops: _,
                 ..
-            } => TsParam {
-                name: emit::escape_ts_keyword(&name),
-                ts_type: "unknown".to_string(),
-                conversion: TsParamConversion::WireEncoded {
-                    encode: encode_ops.clone(),
-                },
-            },
+            } => {
+                let ts_type = param_def
+                    .map(|p| emit::ts_type(&p.type_expr))
+                    .unwrap_or_else(|| "unknown".to_string());
+                TsParam {
+                    name: emit::escape_ts_keyword(&name),
+                    ts_type,
+                    conversion: TsParamConversion::WireEncoded {
+                        encode: encode_ops.clone(),
+                    },
+                }
+            }
             _ => TsParam {
                 name: emit::escape_ts_keyword(&name),
                 ts_type: "unknown".to_string(),

@@ -8,6 +8,7 @@ import {
   echoF32, addF32,
   echoF64, addF64,
   echoString, concatStrings, stringLength,
+  echoPoint, makePoint, addPoints, pointDistance,
 } from './dist/wasm/pkg/node.js';
 
 await initialized;
@@ -58,4 +59,20 @@ assert(echoString('hello') === 'hello', 'echoString(hello)');
 assert(concatStrings('foo', 'bar') === 'foobar', 'concatStrings');
 assert(stringLength('test') === 4, 'stringLength(test)');
 
-console.log('\nAll primitive tests passed!');
+console.log('Testing records...');
+const p1 = makePoint(3.0, 4.0);
+assert(p1.x === 3.0, 'makePoint x');
+assert(p1.y === 4.0, 'makePoint y');
+
+const p2 = echoPoint({ x: 1.5, y: 2.5 });
+assert(p2.x === 1.5, 'echoPoint x');
+assert(p2.y === 2.5, 'echoPoint y');
+
+const p3 = addPoints({ x: 1.0, y: 2.0 }, { x: 3.0, y: 4.0 });
+assert(p3.x === 4.0, 'addPoints x');
+assert(p3.y === 6.0, 'addPoints y');
+
+const dist = pointDistance({ x: 3.0, y: 4.0 });
+assert(Math.abs(dist - 5.0) < 0.0001, 'pointDistance');
+
+console.log('\nAll tests passed!');

@@ -112,7 +112,7 @@ pub fn ts_builtin(id: &BuiltinId) -> String {
 
 fn render_value(expr: &ValueExpr, root_value: &str) -> String {
     match expr {
-        ValueExpr::Instance => "this".to_string(),
+        ValueExpr::Instance => root_value.to_string(),
         ValueExpr::Var(name) if name == "value" => root_value.to_string(),
         ValueExpr::Var(name) => name.clone(),
         ValueExpr::Named(name) => camel_case(name),
