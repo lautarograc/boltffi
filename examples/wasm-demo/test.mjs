@@ -16,6 +16,9 @@ import {
   echoClassroom, makeClassroom,
   Status, echoStatus, statusToString,
   echoShape, shapeArea, makeCircle, makeRectangle,
+  echoOptionalI32, echoOptionalString, echoOptionalPoint,
+  unwrapOrDefaultI32, isSomeString, makeSomePoint, makeNonePoint,
+  MathError, safeDivide, safeSqrt, parsePoint, alwaysOk, alwaysErr,
 } from './dist/wasm/pkg/node.js';
 
 await initialized;
@@ -170,5 +173,62 @@ assert(echoedCircle.radius === 2.5, 'echoShape circle radius');
 const echoedPoint = echoShape({ tag: 'Point' });
 assert(echoedPoint.tag === 'Point', 'echoShape point tag');
 assert(shapeArea({ tag: 'Point' }) === 0.0, 'shapeArea point');
+
+console.log('Testing Option<T>...');
+assert(echoOptionalI32(42) === 42, 'echoOptionalI32 some');
+assert(echoOptionalI32(null) === null, 'echoOptionalI32 none');
+assert(echoOptionalI32(0) === 0, 'echoOptionalI32 zero');
+
+assert(echoOptionalString('hello') === 'hello', 'echoOptionalString some');
+assert(echoOptionalString(null) === null, 'echoOptionalString none');
+assert(echoOptionalString('') === '', 'echoOptionalString empty');
+
+const optPoint = echoOptionalPoint({ x: 1, y: 2 });
+assert(optPoint !== null && optPoint.x === 1 && optPoint.y === 2, 'echoOptionalPoint some');
+assert(echoOptionalPoint(null) === null, 'echoOptionalPoint none');
+
+assert(unwrapOrDefaultI32(10, 5) === 10, 'unwrapOrDefaultI32 some');
+assert(unwrapOrDefaultI32(null, 5) === 5, 'unwrapOrDefaultI32 none');
+
+assert(isSomeString('test') === true, 'isSomeString true');
+assert(isSomeString(null) === false, 'isSomeString false');
+
+const somePoint = makeSomePoint(3, 4);
+assert(somePoint !== null && somePoint.x === 3 && somePoint.y === 4, 'makeSomePoint');
+assert(makeNonePoint() === null, 'makeNonePoint');
+
+console.log('Testing Result<T, E>...');
+assert(safeDivide(10, 2) === 5, 'safeDivide ok');
+try {
+  safeDivide(10, 0);
+  assert(false, 'safeDivide should throw on division by zero');
+} catch (e) {
+  assert(e === MathError.DivisionByZero, 'safeDivide err');
+}
+
+assert(Math.abs(safeSqrt(16) - 4) < 0.0001, 'safeSqrt ok');
+try {
+  safeSqrt(-1);
+  assert(false, 'safeSqrt should throw on negative input');
+} catch (e) {
+  assert(e === MathError.NegativeInput, 'safeSqrt err');
+}
+
+const point = parsePoint('3.5, 4.5');
+assert(Math.abs(point.x - 3.5) < 0.0001 && Math.abs(point.y - 4.5) < 0.0001, 'parsePoint ok');
+try {
+  parsePoint('invalid');
+  assert(false, 'parsePoint should throw on invalid input');
+} catch (e) {
+  assert(typeof e === 'string', 'parsePoint err is string');
+}
+
+assert(alwaysOk(5) === 10, 'alwaysOk');
+try {
+  alwaysErr('test error');
+  assert(false, 'alwaysErr should throw');
+} catch (e) {
+  assert(e === 'test error', 'alwaysErr');
+}
 
 console.log('\nAll tests passed!');
