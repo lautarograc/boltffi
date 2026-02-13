@@ -1,7 +1,7 @@
 pub const WASM_ABI_VERSION: u32 = 1;
 
 #[cfg(any(test, target_arch = "wasm32"))]
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{alloc, dealloc, Layout};
 
 #[cfg(target_arch = "wasm32")]
 #[repr(C)]
@@ -28,6 +28,18 @@ impl WasmCallbackOutBuf {
             unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len as usize) }
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_string_into_packed(value: String) -> u64 {
+    let mut boxed = value.into_bytes().into_boxed_slice();
+    let len = boxed.len();
+    if len == 0 {
+        return 0;
+    }
+    let ptr = boxed.as_mut_ptr();
+    std::mem::forget(boxed);
+    ((len as u64) << 32) | (ptr as u64)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -70,6 +82,14 @@ pub(crate) fn boltffi_wasm_free_impl(ptr: usize, size: usize) {
     };
 
     unsafe { dealloc(ptr as *mut u8, layout) };
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) unsafe fn boltffi_wasm_free_string_return_impl(ptr: usize, len: usize) {
+    if ptr == 0 || len == 0 {
+        return;
+    }
+    unsafe { drop(Vec::from_raw_parts(ptr as *mut u8, len, len)) };
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -117,13 +137,18 @@ mod exports {
     pub extern "C" fn boltffi_wasm_realloc(ptr: u32, old_size: u32, new_size: u32) -> u32 {
         super::boltffi_wasm_realloc_impl(ptr as usize, old_size as usize, new_size as usize) as u32
     }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn boltffi_wasm_free_string_return(ptr: u32, len: u32) {
+        unsafe { super::boltffi_wasm_free_string_return_impl(ptr as usize, len as usize) };
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        WASM_ABI_VERSION, boltffi_wasm_alloc_impl, boltffi_wasm_free_impl,
-        boltffi_wasm_realloc_impl,
+        boltffi_wasm_alloc_impl, boltffi_wasm_free_impl, boltffi_wasm_free_string_return_impl,
+        boltffi_wasm_realloc_impl, WASM_ABI_VERSION,
     };
 
     #[test]
@@ -189,5 +214,15 @@ mod tests {
     fn free_ignores_zero_inputs() {
         boltffi_wasm_free_impl(0, 32);
         boltffi_wasm_free_impl(1024, 0);
+    }
+
+    #[test]
+    fn free_string_return_releases_owned_buffer() {
+        let text = "boltffi";
+        let mut boxed = text.as_bytes().to_vec().into_boxed_slice();
+        let ptr = boxed.as_mut_ptr() as usize;
+        let len = boxed.len();
+        std::mem::forget(boxed);
+        unsafe { boltffi_wasm_free_string_return_impl(ptr, len) };
     }
 }

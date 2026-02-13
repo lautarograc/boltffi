@@ -5,11 +5,11 @@ use syn::ItemFn;
 
 use crate::callback_registry;
 use crate::custom_types;
-use crate::params::{FfiParams, transform_params, transform_params_async};
+use crate::params::{transform_params, transform_params_async, FfiParams};
 use crate::returns::{
-    OptionReturnAbi, ReturnKind, classify_async_return_abi, classify_return,
-    get_async_complete_conversion, get_async_default_ffi_value, get_async_ffi_return_type,
-    get_async_rust_return_type,
+    classify_async_return_abi, classify_return, get_async_complete_conversion,
+    get_async_default_ffi_value, get_async_ffi_return_type, get_async_rust_return_type,
+    OptionReturnAbi, ReturnKind,
 };
 use crate::safety;
 
@@ -60,6 +60,96 @@ fn convert_to_wire_encoded(kind: ReturnKind) -> ReturnKind {
     }
 }
 
+enum StringReturnTransport {
+    WasmPacked,
+    WireEncoded,
+}
+
+struct StringReturnBodies {
+    wasm: proc_macro2::TokenStream,
+    non_wasm: proc_macro2::TokenStream,
+}
+
+fn build_string_return_body(
+    call_expr: proc_macro2::TokenStream,
+    conversions: &[proc_macro2::TokenStream],
+    transport: StringReturnTransport,
+) -> proc_macro2::TokenStream {
+    let conversion_steps = quote! { #(#conversions)* };
+    match transport {
+        StringReturnTransport::WasmPacked => {
+            quote! {
+                #conversion_steps
+                let __boltffi_string_result: String = #call_expr;
+                ::boltffi::__private::wasm_string_into_packed(__boltffi_string_result)
+            }
+        }
+        StringReturnTransport::WireEncoded => {
+            quote! {
+                #conversion_steps
+                let __boltffi_string_result: String = #call_expr;
+                ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_string_result)
+            }
+        }
+    }
+}
+
+fn build_string_return_exports(
+    input: &ItemFn,
+    fn_vis: &syn::Visibility,
+    export_ident: &syn::Ident,
+    ffi_params: &[proc_macro2::TokenStream],
+    bodies: StringReturnBodies,
+) -> TokenStream {
+    let wasm_body = bodies.wasm;
+    let non_wasm_body = bodies.non_wasm;
+
+    let wasm_export = match ffi_params.is_empty() {
+        true => quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[unsafe(no_mangle)]
+            #fn_vis extern "C" fn #export_ident() -> u64 {
+                #wasm_body
+            }
+        },
+        false => quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[unsafe(no_mangle)]
+            #fn_vis unsafe extern "C" fn #export_ident(
+                #(#ffi_params),*
+            ) -> u64 {
+                #wasm_body
+            }
+        },
+    };
+
+    let non_wasm_export = match ffi_params.is_empty() {
+        true => quote! {
+            #[cfg(not(target_arch = "wasm32"))]
+            #[unsafe(no_mangle)]
+            #fn_vis extern "C" fn #export_ident() -> ::boltffi::__private::FfiBuf<u8> {
+                #non_wasm_body
+            }
+        },
+        false => quote! {
+            #[cfg(not(target_arch = "wasm32"))]
+            #[unsafe(no_mangle)]
+            #fn_vis unsafe extern "C" fn #export_ident(
+                #(#ffi_params),*
+            ) -> ::boltffi::__private::FfiBuf<u8> {
+                #non_wasm_body
+            }
+        },
+    };
+
+    TokenStream::from(quote! {
+        #input
+
+        #wasm_export
+        #non_wasm_export
+    })
+}
+
 pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as ItemFn);
 
@@ -99,15 +189,29 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
     let has_params = !ffi_params.is_empty();
     let has_conversions = !conversions.is_empty();
 
-    // we need to classify first before we check if the return type
-    // needs wire encoding, classify_return gives us String, Vec,
-    // Option, Result etc but the codegen just wants one WireEncoded
-    // variant with the full syn::Type
-    let return_kind = classify_return(fn_output);
-    let return_kind = if should_wire_encode(&return_kind) {
-        convert_to_wire_encoded(return_kind)
+    let raw_return_kind = classify_return(fn_output);
+
+    if matches!(&raw_return_kind, ReturnKind::String) {
+        let call_expr = quote! { #fn_name(#(#call_args),*) };
+        let bodies = StringReturnBodies {
+            wasm: build_string_return_body(
+                call_expr.clone(),
+                &conversions,
+                StringReturnTransport::WasmPacked,
+            ),
+            non_wasm: build_string_return_body(
+                call_expr,
+                &conversions,
+                StringReturnTransport::WireEncoded,
+            ),
+        };
+        return build_string_return_exports(&input, fn_vis, &export_ident, &ffi_params, bodies);
+    }
+
+    let return_kind = if should_wire_encode(&raw_return_kind) {
+        convert_to_wire_encoded(raw_return_kind)
     } else {
-        return_kind
+        raw_return_kind
     };
 
     let expanded = match return_kind {

@@ -51,7 +51,9 @@ pub struct TsClass {
 
 impl TsClass {
     pub fn has_default_constructor(&self) -> bool {
-        self.constructors.iter().any(|constructor| constructor.is_default)
+        self.constructors
+            .iter()
+            .any(|constructor| constructor.is_default)
     }
 
     pub fn default_constructor(&self) -> Option<&TsClassConstructor> {
@@ -542,6 +544,7 @@ pub enum TsReturnAbi {
     Void,
     Direct { ts_cast: String },
     WireEncoded,
+    WasmStringPacked,
 }
 
 impl TsReturnAbi {

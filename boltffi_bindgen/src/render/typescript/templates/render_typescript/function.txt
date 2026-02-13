@@ -24,6 +24,9 @@
       _module.freeBufDescriptor(outPtr);
     }
   }
+{%- when TsReturnAbi::WasmStringPacked %}
+  const packedString = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+  return _module.takePackedUtf8String(packedString);
 {%- endmatch %}
 {%- else %}
   try {
@@ -48,6 +51,9 @@
         _module.freeBufDescriptor(outPtr);
       }
     }
+{%- when TsReturnAbi::WasmStringPacked %}
+    const packedString = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+    return _module.takePackedUtf8String(packedString);
 {%- endmatch %}
   } finally {
     {{ cleanup_code }}

@@ -114,6 +114,9 @@ export class {{ cls.class_name }} {
         _module.freeBufDescriptor(outPtr);
       }
     }
+{%- when TsReturnAbi::WasmStringPacked %}
+    const packedString = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
+    return _module.takePackedUtf8String(packedString);
 {%- endmatch %}
 {%- when TsClassMethodMode::Async with (async_method) %}
     const handle = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
@@ -189,6 +192,9 @@ export class {{ cls.class_name }} {
           _module.freeBufDescriptor(outPtr);
         }
       }
+{%- when TsReturnAbi::WasmStringPacked %}
+      const packedString = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
+      return _module.takePackedUtf8String(packedString);
 {%- endmatch %}
     } finally {
       {{ method.cleanup_code() }}

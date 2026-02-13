@@ -10,7 +10,7 @@ use crate::ir::abi::{
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackKind, CallbackTraitDef, ClassDef, ConstructorDef, EnumDef, FunctionDef, MethodDef,
-    ParamDef, RecordDef, Receiver, ReturnDef,
+    ParamDef, Receiver, RecordDef, ReturnDef,
 };
 use crate::ir::ids::{CallbackId, EnumId, FieldName, RecordId};
 use crate::ir::ops::{
@@ -172,17 +172,13 @@ impl<'a> TypeScriptLowerer<'a> {
         let mut error_types: HashSet<String> = HashSet::new();
 
         for func in functions {
-            if func.throws && !func.err_type.is_empty() && !is_excluded_error_type(&func.err_type)
-            {
+            if func.throws && !func.err_type.is_empty() && !is_excluded_error_type(&func.err_type) {
                 error_types.insert(func.err_type.clone());
             }
         }
 
         for func in async_functions {
-            if func.throws
-                && !func.err_type.is_empty()
-                && !is_excluded_error_type(&func.err_type)
-            {
+            if func.throws && !func.err_type.is_empty() && !is_excluded_error_type(&func.err_type) {
                 error_types.insert(func.err_type.clone());
             }
         }
@@ -322,9 +318,7 @@ impl<'a> TypeScriptLowerer<'a> {
 
     fn lower_class(&self, def: &ClassDef, index: &AbiIndex) -> TsClass {
         let class_name = naming::to_upper_camel_case(def.id.as_str());
-        let ffi_free = naming::class_ffi_free(def.id.as_str())
-            .as_str()
-            .to_string();
+        let ffi_free = naming::class_ffi_free(def.id.as_str()).as_str().to_string();
 
         let constructors = def
             .constructors
@@ -380,7 +374,9 @@ impl<'a> TypeScriptLowerer<'a> {
             .filter(|parameter| {
                 !matches!(
                     parameter.role,
-                    ParamRole::SyntheticLen { .. } | ParamRole::OutLen { .. } | ParamRole::StatusOut
+                    ParamRole::SyntheticLen { .. }
+                        | ParamRole::OutLen { .. }
+                        | ParamRole::StatusOut
                 )
             })
             .map(|abi_param| {
@@ -428,7 +424,9 @@ impl<'a> TypeScriptLowerer<'a> {
             .filter(|(param_index, parameter)| {
                 if matches!(
                     parameter.role,
-                    ParamRole::SyntheticLen { .. } | ParamRole::OutLen { .. } | ParamRole::StatusOut
+                    ParamRole::SyntheticLen { .. }
+                        | ParamRole::OutLen { .. }
+                        | ParamRole::StatusOut
                 ) {
                     return false;
                 }
@@ -949,7 +947,11 @@ impl<'a> TypeScriptLowerer<'a> {
             } => {
                 let decode = emit::emit_reader_read(decode_ops);
                 let ts_type_str = infer_ts_type_from_read_ops(decode_ops);
-                (Some(ts_type_str), TsReturnAbi::WireEncoded, decode)
+                if is_plain_string_wire_return(decode_ops) {
+                    (Some(ts_type_str), TsReturnAbi::WasmStringPacked, decode)
+                } else {
+                    (Some(ts_type_str), TsReturnAbi::WireEncoded, decode)
+                }
             }
             ReturnTransport::Handle { class_id, nullable } => {
                 let class_name = naming::to_upper_camel_case(class_id.as_str());
@@ -1046,15 +1048,19 @@ impl<'a> TypeScriptLowerer<'a> {
             let return_wasm_type = match &call.return_ {
                 ReturnTransport::Void => None,
                 ReturnTransport::Direct(abi_type) => Some(abi_type_to_wasm(abi_type)),
-                ReturnTransport::Encoded { .. } => {
-                    wasm_params.insert(
-                        0,
-                        TsWasmParam {
-                            name: "out".to_string(),
-                            wasm_type: "number".to_string(),
-                        },
-                    );
-                    None
+                ReturnTransport::Encoded { decode_ops, .. } => {
+                    if is_plain_string_wire_return(decode_ops) {
+                        Some("bigint".to_string())
+                    } else {
+                        wasm_params.insert(
+                            0,
+                            TsWasmParam {
+                                name: "out".to_string(),
+                                wasm_type: "number".to_string(),
+                            },
+                        );
+                        None
+                    }
                 }
                 ReturnTransport::Handle { .. } => Some("number".to_string()),
                 ReturnTransport::Callback { .. } => None,
@@ -1223,6 +1229,10 @@ fn primitive_buffer_ts_type(abi_type: AbiType) -> String {
         | AbiType::F64 => "number[]".to_string(),
         AbiType::Void | AbiType::Pointer => "unknown[]".to_string(),
     }
+}
+
+fn is_plain_string_wire_return(seq: &ReadSeq) -> bool {
+    matches!(seq.ops.as_slice(), [ReadOp::String { .. }])
 }
 
 fn infer_ts_type_from_read_ops(seq: &ReadSeq) -> String {
@@ -1409,13 +1419,13 @@ fn remap_named_in_write_op(op: &WriteOp) -> WriteOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
         ClassDef, ConstructorDef, FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver,
         ReturnDef,
     };
     use crate::ir::ids::{ClassId, FunctionId, MethodId, ParamName};
+    use crate::ir::Lowerer as IrLowerer;
 
     fn empty_contract() -> FfiContract {
         FfiContract {
@@ -1583,7 +1593,9 @@ mod tests {
     #[test]
     fn class_instance_methods_exclude_receiver_from_public_params() {
         let mut contract = empty_contract();
-        contract.catalog.insert_class(class_with_sync_and_async_methods());
+        contract
+            .catalog
+            .insert_class(class_with_sync_and_async_methods());
 
         let module = lower_contract(&contract);
         let class = module
@@ -1605,7 +1617,9 @@ mod tests {
     #[test]
     fn class_async_methods_generate_wasm_poll_sync_symbol_names() {
         let mut contract = empty_contract();
-        contract.catalog.insert_class(class_with_sync_and_async_methods());
+        contract
+            .catalog
+            .insert_class(class_with_sync_and_async_methods());
 
         let module = lower_contract(&contract);
         let class = module
@@ -2214,25 +2228,27 @@ mod tests {
     #[test]
     fn class_method_with_record_param_uses_codec_conversion() {
         let mut contract = empty_contract();
-        contract.catalog.insert_record(crate::ir::definitions::RecordDef {
-            id: crate::ir::ids::RecordId::new("Point"),
-            fields: vec![
-                crate::ir::definitions::FieldDef {
-                    name: FieldName::new("x"),
-                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
-                    doc: None,
-                    default: None,
-                },
-                crate::ir::definitions::FieldDef {
-                    name: FieldName::new("y"),
-                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
-                    doc: None,
-                    default: None,
-                },
-            ],
-            doc: None,
-            deprecated: None,
-        });
+        contract
+            .catalog
+            .insert_record(crate::ir::definitions::RecordDef {
+                id: crate::ir::ids::RecordId::new("Point"),
+                fields: vec![
+                    crate::ir::definitions::FieldDef {
+                        name: FieldName::new("x"),
+                        type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                        doc: None,
+                        default: None,
+                    },
+                    crate::ir::definitions::FieldDef {
+                        name: FieldName::new("y"),
+                        type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                        doc: None,
+                        default: None,
+                    },
+                ],
+                doc: None,
+                deprecated: None,
+            });
         contract.catalog.insert_class(ClassDef {
             id: ClassId::new("Canvas"),
             constructors: vec![],

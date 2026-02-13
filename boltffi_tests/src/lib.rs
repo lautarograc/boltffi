@@ -645,12 +645,7 @@ impl ClassTestFixture {
         }
     }
 
-    pub fn new_full(
-        id: i32,
-        name: String,
-        point: FixturePoint,
-        status: FixtureStatus,
-    ) -> Self {
+    pub fn new_full(id: i32, name: String, point: FixturePoint, status: FixtureStatus) -> Self {
         Self {
             id,
             name,
@@ -742,7 +737,10 @@ impl ClassTestFixture {
     }
 
     pub fn find_value(&self, target: i32) -> Option<i32> {
-        self.values.iter().position(|&v| v == target).map(|i| i as i32)
+        self.values
+            .iter()
+            .position(|&v| v == target)
+            .map(|i| i as i32)
     }
 
     pub fn static_add(a: i32, b: i32) -> i32 {
@@ -803,16 +801,36 @@ impl ClassTestFixture {
     }
 
     pub async fn async_find(&self, target: i32) -> Option<i32> {
-        self.values.iter().position(|&v| v == target).map(|i| i as i32)
+        self.values
+            .iter()
+            .position(|&v| v == target)
+            .map(|i| i as i32)
     }
 
-    pub fn with_primitives(&self, a: i8, b: u8, c: i16, d: u16, e: i64, f: u64, g: f32, h: f64, i: bool) -> i64 {
-        (a as i64) + (b as i64) + (c as i64) + (d as i64) + e + (f as i64) + (g as i64) + (h as i64) + (if i { 1 } else { 0 })
+    pub fn with_primitives(
+        &self,
+        a: i8,
+        b: u8,
+        c: i16,
+        d: u16,
+        e: i64,
+        f: u64,
+        g: f32,
+        h: f64,
+        i: bool,
+    ) -> i64 {
+        (a as i64)
+            + (b as i64)
+            + (c as i64)
+            + (d as i64)
+            + e
+            + (f as i64)
+            + (g as i64)
+            + (h as i64)
+            + (if i { 1 } else { 0 })
     }
 
     pub fn echo_bytes(&self, data: Vec<u8>) -> Vec<u8> {
         data
     }
 }
-
-
