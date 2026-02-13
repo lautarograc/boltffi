@@ -633,6 +633,7 @@ mod tests {
             ],
             is_blittable: true,
             wire_size: Some(16),
+            tail_padding: 0,
             doc: None,
         };
 
@@ -662,6 +663,7 @@ mod tests {
             ],
             is_blittable: false,
             wire_size: None,
+            tail_padding: 0,
             doc: Some("A user record".to_string()),
         };
 
@@ -1051,7 +1053,7 @@ mod tests {
         assert!(rendered.contains("_module.freeBuf(outPtr);"));
         assert!(rendered.contains("_module.freeBufDescriptor(outPtr);"));
         assert!(rendered.contains(
-            "(_module.exports.boltffi_counter_next_value_free as Function)(awaitedHandle);"
+            "(_exports.boltffi_counter_next_value_free as Function)(awaitedHandle);"
         ));
     }
 

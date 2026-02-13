@@ -1513,7 +1513,7 @@ mod tests {
     }
 
     #[test]
-    fn wasm_import_encoded_return_uses_sret_out_param() {
+    fn wasm_import_string_return_uses_packed_bigint() {
         let mut contract = empty_contract();
         contract.functions.push(function(
             "echo_name",
@@ -1527,14 +1527,12 @@ mod tests {
             .wasm_imports
             .iter()
             .find(|import| import.ffi_name == "boltffi_echo_name")
-            .expect("wasm import for encoded return");
+            .expect("wasm import for string return");
 
-        assert_eq!(import.return_wasm_type, None);
-        assert_eq!(import.params.len(), 2);
-        assert_eq!(import.params[0].name, "out");
+        assert_eq!(import.return_wasm_type, Some("bigint".to_string()));
+        assert_eq!(import.params.len(), 1);
+        assert_eq!(import.params[0].name, "count");
         assert_eq!(import.params[0].wasm_type, "number");
-        assert_eq!(import.params[1].name, "count");
-        assert_eq!(import.params[1].wasm_type, "number");
     }
 
     #[test]

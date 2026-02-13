@@ -6,7 +6,7 @@ export function getUsers(): User[] {
   const outPtr = _module.allocBufDescriptor();
   let callCompleted = false;
   try {
-    (_module.exports.boltffi_get_users as Function)(outPtr);
+    (_exports.boltffi_get_users as Function)(outPtr);
     callCompleted = true;
     const reader = _module.readerFromBuf(outPtr);
     const result = reader.readArray(() => decodeUser(reader));
