@@ -8,8 +8,8 @@ use crate::ir::abi::{
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
-    CallbackTraitDef, ClassDef, ConstructorDef, EnumDef, FunctionDef, MethodDef, ParamDef,
-    RecordDef, Receiver, ReturnDef,
+    CallbackKind, CallbackTraitDef, ClassDef, ConstructorDef, EnumDef, FunctionDef, MethodDef,
+    ParamDef, RecordDef, Receiver, ReturnDef,
 };
 use crate::ir::ids::{CallbackId, EnumId, FieldName, RecordId};
 use crate::ir::ops::{
@@ -716,12 +716,33 @@ impl<'a> TypeScriptLowerer<'a> {
             })
             .collect();
 
+        let closure_fn_type = matches!(def.kind, CallbackKind::Closure)
+            .then(|| {
+                def.methods.first().map(|method| {
+                    let params = method
+                        .params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| format!("p{}: {}", i, emit::ts_type(&p.type_expr)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let return_type = match &method.returns {
+                        ReturnDef::Void => "void".to_string(),
+                        ReturnDef::Value(ty) => emit::ts_type(ty),
+                        ReturnDef::Result { ok, .. } => emit::ts_type(ok),
+                    };
+                    format!("({}) => {}", params, return_type)
+                })
+            })
+            .flatten();
+
         TsCallback {
             interface_name,
             trait_name_snake,
             create_handle_fn,
             methods,
             async_methods,
+            closure_fn_type,
             doc: def.doc.clone(),
         }
     }

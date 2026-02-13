@@ -119,7 +119,7 @@ pub fn transform_params(
 
                     acc.call_args.push(quote! { #name });
                 }
-                ParamTransform::Callback(arg_types) => {
+                ParamTransform::Callback { params: arg_types, returns } => {
                     let cb_name = syn::Ident::new(&format!("{}_cb", name), name.span());
                     let ud_name = syn::Ident::new(&format!("{}_ud", name), name.span());
 
@@ -163,14 +163,17 @@ pub fn transform_params(
                         },
                     );
 
+                    let ffi_return_type = returns.as_ref().map(|ty| quote! { -> #ty }).unwrap_or_default();
+                    let closure_return_type = returns.as_ref().map(|ty| quote! { -> #ty }).unwrap_or_default();
+
                     acc.ffi_params.push(
-                        quote! { #cb_name: extern "C" fn(*mut ::core::ffi::c_void, #(#ffi_cb_args),*) },
+                        quote! { #cb_name: extern "C" fn(*mut ::core::ffi::c_void, #(#ffi_cb_args),*) #ffi_return_type },
                     );
                     acc.ffi_params
                         .push(quote! { #ud_name: *mut ::core::ffi::c_void });
 
                     acc.conversions.push(quote! {
-                        let #name = |#(#arg_names: #arg_types),*| {
+                        let #name = |#(#arg_names: #arg_types),*| #closure_return_type {
                             #(#wire_vars)*
                             #cb_name(#ud_name, #(#cb_call_args),*)
                         };
@@ -518,7 +521,7 @@ pub fn transform_params_async(
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
                 }
-                ParamTransform::Callback(_) => {
+                ParamTransform::Callback { .. } => {
                     panic!("Callbacks are not supported in async functions");
                 }
                 ParamTransform::SliceRef(inner_ty) => {
@@ -778,7 +781,7 @@ pub fn transform_method_params(
 
                     acc.call_args.push(quote! { #name });
                 }
-                ParamTransform::Callback(arg_types) => {
+                ParamTransform::Callback { params: arg_types, returns } => {
                     let cb_name = syn::Ident::new(&format!("{}_cb", name), name.span());
                     let ud_name = syn::Ident::new(&format!("{}_ud", name), name.span());
 
@@ -822,14 +825,17 @@ pub fn transform_method_params(
                         },
                     );
 
+                    let ffi_return_type = returns.as_ref().map(|ty| quote! { -> #ty }).unwrap_or_default();
+                    let closure_return_type = returns.as_ref().map(|ty| quote! { -> #ty }).unwrap_or_default();
+
                     acc.ffi_params.push(
-                        quote! { #cb_name: extern "C" fn(*mut ::core::ffi::c_void, #(#ffi_cb_args),*) },
+                        quote! { #cb_name: extern "C" fn(*mut ::core::ffi::c_void, #(#ffi_cb_args),*) #ffi_return_type },
                     );
                     acc.ffi_params
                         .push(quote! { #ud_name: *mut ::core::ffi::c_void });
 
                     acc.conversions.push(quote! {
-                        let #name = |#(#arg_names: #arg_types),*| {
+                        let #name = |#(#arg_names: #arg_types),*| #closure_return_type {
                             #(#wire_vars)*
                             #cb_name(#ud_name, #(#cb_call_args),*)
                         };
@@ -1164,7 +1170,7 @@ pub fn transform_method_params_async(
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
                 }
-                ParamTransform::Callback(_) => {
+                ParamTransform::Callback { .. } => {
                     panic!("Callbacks are not supported in async methods");
                 }
                 ParamTransform::SliceRef(_) | ParamTransform::SliceMut(_) => {

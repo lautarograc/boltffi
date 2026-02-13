@@ -481,3 +481,199 @@ pub mod signatures {
         }
     }
 }
+
+pub mod callback {
+    use super::naming::to_snake_case;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum TypeId {
+        Void,
+        Bool,
+        I8,
+        U8,
+        I16,
+        U16,
+        I32,
+        U32,
+        I64,
+        U64,
+        F32,
+        F64,
+        Isize,
+        Usize,
+        String,
+        Bytes,
+        Named(std::string::String),
+    }
+
+    impl TypeId {
+        pub fn from_rust_type_str(s: &str) -> Self {
+            match s {
+                "bool" => Self::Bool,
+                "i8" => Self::I8,
+                "u8" => Self::U8,
+                "i16" => Self::I16,
+                "u16" => Self::U16,
+                "i32" => Self::I32,
+                "u32" => Self::U32,
+                "i64" => Self::I64,
+                "u64" => Self::U64,
+                "f32" => Self::F32,
+                "f64" => Self::F64,
+                "isize" => Self::Isize,
+                "usize" => Self::Usize,
+                "String" | "&str" => Self::String,
+                "()" => Self::Void,
+                other => Self::Named(other.to_string()),
+            }
+        }
+
+        pub fn as_signature_part(&self) -> String {
+            match self {
+                Self::Void => "Void".into(),
+                Self::Bool => "Bool".into(),
+                Self::I8 => "I8".into(),
+                Self::U8 => "U8".into(),
+                Self::I16 => "I16".into(),
+                Self::U16 => "U16".into(),
+                Self::I32 => "I32".into(),
+                Self::U32 => "U32".into(),
+                Self::I64 => "I64".into(),
+                Self::U64 => "U64".into(),
+                Self::F32 => "F32".into(),
+                Self::F64 => "F64".into(),
+                Self::Isize => "Isize".into(),
+                Self::Usize => "Usize".into(),
+                Self::String => "String".into(),
+                Self::Bytes => "Bytes".into(),
+                Self::Named(name) => name.clone(),
+            }
+        }
+    }
+
+    pub fn closure_signature_id(params: &[TypeId], returns: &TypeId) -> String {
+        let params_part = params
+            .iter()
+            .map(|p| p.as_signature_part())
+            .collect::<Vec<_>>()
+            .join("_");
+
+        let is_void_return = matches!(returns, TypeId::Void);
+        let ret_part = returns.as_signature_part();
+
+        if is_void_return {
+            if params_part.is_empty() {
+                "Void".to_string()
+            } else {
+                params_part
+            }
+        } else if params_part.is_empty() {
+            format!("To{}", ret_part)
+        } else {
+            format!("{}To{}", params_part, ret_part)
+        }
+    }
+
+    pub fn closure_callback_id(params: &[TypeId], returns: &TypeId) -> String {
+        format!("__Closure_{}", closure_signature_id(params, returns))
+    }
+
+    pub fn closure_callback_id_snake(params: &[TypeId], returns: &TypeId) -> String {
+        to_snake_case(&closure_callback_id(params, returns))
+    }
+
+    pub fn callback_wasm_import_call(callback_id_snake: &str) -> String {
+        format!("__boltffi_callback_{}_call", callback_id_snake)
+    }
+
+    pub fn callback_wasm_import_free(callback_id_snake: &str) -> String {
+        format!("__boltffi_callback_{}_free", callback_id_snake)
+    }
+
+    pub fn callback_wasm_import_clone(callback_id_snake: &str) -> String {
+        format!("__boltffi_callback_{}_clone", callback_id_snake)
+    }
+
+    pub fn callback_create_handle_global() -> &'static str {
+        "boltffi_create_callback_handle"
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn closure_i32_to_i32() {
+            let params = vec![TypeId::I32];
+            let returns = TypeId::I32;
+            assert_eq!(closure_signature_id(&params, &returns), "I32ToI32");
+            assert_eq!(closure_callback_id(&params, &returns), "__Closure_I32ToI32");
+            assert_eq!(
+                closure_callback_id_snake(&params, &returns),
+                "___closure__i32_to_i32"
+            );
+        }
+
+        #[test]
+        fn closure_point_to_point() {
+            let params = vec![TypeId::Named("Point".into())];
+            let returns = TypeId::Named("Point".into());
+            assert_eq!(closure_signature_id(&params, &returns), "PointToPoint");
+            assert_eq!(
+                closure_callback_id(&params, &returns),
+                "__Closure_PointToPoint"
+            );
+        }
+
+        #[test]
+        fn closure_void_return() {
+            let params = vec![TypeId::I32];
+            let returns = TypeId::Void;
+            assert_eq!(closure_signature_id(&params, &returns), "I32");
+            assert_eq!(closure_callback_id(&params, &returns), "__Closure_I32");
+        }
+
+        #[test]
+        fn closure_no_params_with_return() {
+            let params = vec![];
+            let returns = TypeId::I32;
+            assert_eq!(closure_signature_id(&params, &returns), "ToI32");
+        }
+
+        #[test]
+        fn closure_no_params_void_return() {
+            let params = vec![];
+            let returns = TypeId::Void;
+            assert_eq!(closure_signature_id(&params, &returns), "Void");
+        }
+
+        #[test]
+        fn closure_multi_params() {
+            let params = vec![TypeId::I32, TypeId::String];
+            let returns = TypeId::Bool;
+            assert_eq!(closure_signature_id(&params, &returns), "I32_StringToBool");
+        }
+
+        #[test]
+        fn wasm_import_names() {
+            let id_snake = "___closure__i32_to_i32";
+            assert_eq!(
+                callback_wasm_import_call(id_snake),
+                "__boltffi_callback____closure__i32_to_i32_call"
+            );
+            assert_eq!(
+                callback_wasm_import_free(id_snake),
+                "__boltffi_callback____closure__i32_to_i32_free"
+            );
+            assert_eq!(
+                callback_wasm_import_clone(id_snake),
+                "__boltffi_callback____closure__i32_to_i32_clone"
+            );
+        }
+
+        #[test]
+        fn global_create_handle_name() {
+            assert_eq!(callback_create_handle_global(), "boltffi_create_callback_handle");
+        }
+    }
+}
