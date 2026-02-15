@@ -224,7 +224,10 @@ fn generate_async_export(
     let cancel_ident = syn::Ident::new(&format!("{}_cancel", base_name), fn_name.span());
     let free_ident = syn::Ident::new(&format!("{}_free", base_name), fn_name.span());
 
-    let params = transform_params_async(fn_inputs, custom_types, callback_registry);
+    let params = match transform_params_async(fn_inputs, custom_types, callback_registry) {
+        Ok(params) => params,
+        Err(error) => return error.to_compile_error().into(),
+    };
     let return_abi = ReturnAbi::from_output(fn_output);
 
     let ffi_return_type = return_abi.async_ffi_return_type();

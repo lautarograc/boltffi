@@ -590,7 +590,11 @@ fn generate_async_method_export(
     let free_ident = syn::Ident::new(&format!("{}_free", base_name), method_name.span());
 
     let other_inputs = method.sig.inputs.iter().skip(1).cloned();
-    let params = transform_method_params_async(other_inputs, custom_types, callback_registry);
+    let params = match transform_method_params_async(other_inputs, custom_types, callback_registry)
+    {
+        Ok(params) => params,
+        Err(error) => return Some(error.to_compile_error()),
+    };
 
     let fn_output = &method.sig.output;
     let return_abi = ReturnAbi::from_output(fn_output);
