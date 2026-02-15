@@ -103,7 +103,7 @@ pub struct FunctionTemplate<'a> {
     pub name: &'a str,
     pub params: &'a [TsParam],
     pub return_type_str: &'a str,
-    pub return_route: &'a TsSyncTransportRoute,
+    pub return_route: &'a TsOutputRoute,
     pub ffi_name: &'a str,
     pub call_args: &'a str,
     pub call_args_with_out: &'a str,
@@ -138,7 +138,7 @@ pub struct AsyncFunctionTemplate<'a> {
     pub call_args: &'a str,
     pub wrapper_code: &'a str,
     pub cleanup_code: &'a str,
-    pub return_route: &'a TsAsyncTransportRoute,
+    pub return_route: &'a TsOutputRoute,
     pub doc: &'a Option<String>,
 }
 
@@ -750,7 +750,7 @@ mod tests {
             name: "reset",
             params: &[],
             return_type_str: "void",
-            return_route: &TsSyncTransportRoute::Void,
+            return_route: &TsOutputRoute::Void,
             ffi_name: "boltffi_reset",
             call_args: "",
             call_args_with_out: "outPtr",
@@ -780,7 +780,7 @@ mod tests {
             name: "add",
             params: &params,
             return_type_str: "number",
-            return_route: &TsSyncTransportRoute::Direct {
+            return_route: &TsOutputRoute::Direct {
                 ts_cast: String::new(),
             },
             ffi_name: "boltffi_add",
@@ -800,7 +800,7 @@ mod tests {
             name: "getUsers",
             params: &[],
             return_type_str: "User[]",
-            return_route: &TsSyncTransportRoute::Packed {
+            return_route: &TsOutputRoute::Packed {
                 decode_expr: "reader.readArray(() => decodeUser(reader))".to_string(),
             },
             ffi_name: "boltffi_get_users",
@@ -953,7 +953,7 @@ mod tests {
                     return_type: Some("number".to_string()),
                     return_handle: None,
                     mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                        return_route: TsSyncTransportRoute::Direct {
+                        return_route: TsOutputRoute::Direct {
                             ts_cast: String::new(),
                         },
                     }),
@@ -973,7 +973,7 @@ mod tests {
                             .to_string(),
                         cancel_ffi_name: "boltffi_counter_next_value_cancel".to_string(),
                         free_ffi_name: "boltffi_counter_next_value_free".to_string(),
-                        return_route: TsAsyncTransportRoute::Packed {
+                        return_route: TsOutputRoute::Packed {
                             decode_expr: "reader.readI32()".to_string(),
                         },
                     }),
@@ -1031,7 +1031,7 @@ mod tests {
                     panic_message_ffi_name: "boltffi_counter_next_value_panic_message".to_string(),
                     cancel_ffi_name: "boltffi_counter_next_value_cancel".to_string(),
                     free_ffi_name: "boltffi_counter_next_value_free".to_string(),
-                    return_route: TsAsyncTransportRoute::Packed {
+                    return_route: TsOutputRoute::Packed {
                         decode_expr: "reader.readI32()".to_string(),
                     },
                 }),
@@ -1073,7 +1073,7 @@ mod tests {
                     panic_message_ffi_name: "boltffi_database_query_panic_message".to_string(),
                     cancel_ffi_name: "boltffi_database_query_cancel".to_string(),
                     free_ffi_name: "boltffi_database_query_free".to_string(),
-                    return_route: TsAsyncTransportRoute::Packed {
+                    return_route: TsOutputRoute::Packed {
                         decode_expr: "QueryResultCodec.decode(reader)".to_string(),
                     },
                 }),
@@ -1162,7 +1162,7 @@ mod tests {
                 return_type: Some("number".to_string()),
                 return_handle: None,
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_route: TsSyncTransportRoute::Direct {
+                    return_route: TsOutputRoute::Direct {
                         ts_cast: String::new(),
                     },
                 }),
@@ -1199,7 +1199,7 @@ mod tests {
                 return_type: None,
                 return_handle: None,
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_route: TsSyncTransportRoute::Void,
+                    return_route: TsOutputRoute::Void,
                 }),
                 doc: None,
             }],
@@ -1226,7 +1226,7 @@ mod tests {
                     nullable: false,
                 }),
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_route: TsSyncTransportRoute::Direct {
+                    return_route: TsOutputRoute::Direct {
                         ts_cast: String::new(),
                     },
                 }),
@@ -1259,7 +1259,7 @@ mod tests {
                     nullable: true,
                 }),
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_route: TsSyncTransportRoute::Direct {
+                    return_route: TsOutputRoute::Direct {
                         ts_cast: String::new(),
                     },
                 }),
@@ -1291,7 +1291,7 @@ mod tests {
                 return_type: None,
                 return_handle: None,
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_route: TsSyncTransportRoute::Void,
+                    return_route: TsOutputRoute::Void,
                 }),
                 doc: None,
             }],
@@ -1324,7 +1324,7 @@ mod tests {
                     panic_message_ffi_name: "boltffi_database_query_panic_message".to_string(),
                     cancel_ffi_name: "boltffi_database_query_cancel".to_string(),
                     free_ffi_name: "boltffi_database_query_free".to_string(),
-                    return_route: TsAsyncTransportRoute::Packed {
+                    return_route: TsOutputRoute::Packed {
                         decode_expr: "QueryResultCodec.decode(reader)".to_string(),
                     },
                 }),

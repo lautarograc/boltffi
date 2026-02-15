@@ -15,7 +15,7 @@ use crate::ir::ids::{CallbackId, EnumId, ParamName, RecordId};
 use crate::ir::ops::SizeExpr;
 use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::ir::{AsyncOutputAbi, SyncInputAbi, SyncOutputAbi};
+use crate::ir::{InputBinding, OutputBinding};
 use crate::render::kotlin::{NamingConvention, primitives};
 
 use super::plan::{
@@ -169,8 +169,8 @@ impl<'a> JniLowerer<'a> {
     }
 
     fn collect_used_from_param(&self, param: &AbiParam, used: &mut HashSet<CallbackId>) {
-        if let Some(SyncInputAbi::CallbackHandle { callback_id, .. }) =
-            SyncInputAbi::from_abi_param(param)
+        if let Some(InputBinding::CallbackHandle { callback_id, .. }) =
+            InputBinding::from_abi_param(param)
         {
             used.insert(callback_id);
         }
@@ -181,16 +181,16 @@ impl<'a> JniLowerer<'a> {
         output_shape: &crate::ir::abi::OutputShape,
         used: &mut HashSet<CallbackId>,
     ) {
-        if let SyncOutputAbi::CallbackHandle { callback_id, .. } =
-            SyncOutputAbi::from_output_shape(output_shape)
+        if let OutputBinding::CallbackHandle { callback_id, .. } =
+            OutputBinding::from_output_shape(output_shape)
         {
             used.insert(callback_id);
         }
     }
 
     fn collect_used_from_async(&self, async_call: &AsyncCall, used: &mut HashSet<CallbackId>) {
-        if let AsyncOutputAbi::CallbackHandle { callback_id, .. } =
-            AsyncOutputAbi::from_result_shape(&async_call.result_shape)
+        if let OutputBinding::CallbackHandle { callback_id, .. } =
+            OutputBinding::from_result_shape(&async_call.result_shape)
         {
             used.insert(callback_id);
         }
@@ -1607,11 +1607,11 @@ impl<'a> JniLowerer<'a> {
 
     fn callback_param(&self, param: &AbiParam, is_async: bool) -> LoweredCallbackParam {
         let param_name = param.name.as_str();
-        match SyncInputAbi::from_abi_param(param) {
-            Some(SyncInputAbi::Scalar) => {
+        match InputBinding::from_abi_param(param) {
+            Some(InputBinding::Scalar) => {
                 self.lower_callback_direct_param(param_name, &param.ffi_type)
             }
-            Some(SyncInputAbi::WirePacket { .. }) => {
+            Some(InputBinding::WirePacket { .. }) => {
                 self.lower_callback_encoded_param(param_name, is_async)
             }
             _ => panic!(

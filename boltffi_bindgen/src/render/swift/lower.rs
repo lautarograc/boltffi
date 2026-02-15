@@ -31,7 +31,7 @@ use crate::ir::ops::{
 use crate::ir::plan::AbiType;
 use crate::ir::plan::{CallbackStyle, Mutability};
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::ir::{AsyncOutputAbi, SyncInputAbi, SyncOutputAbi};
+use crate::ir::{FastOutputBinding, InputBinding, OutputBinding};
 use crate::render::{TypeConversion, TypeMappings};
 
 struct AbiIndex {
@@ -627,8 +627,8 @@ impl<'a> SwiftLowerer<'a> {
                             .iter()
                             .filter(|param| {
                                 matches!(
-                                    SyncInputAbi::from_abi_param(param),
-                                    Some(SyncInputAbi::Scalar | SyncInputAbi::WirePacket { .. })
+                                    InputBinding::from_abi_param(param),
+                                    Some(InputBinding::Scalar | InputBinding::WirePacket { .. })
                                 )
                             })
                             .map(|param| {
@@ -674,11 +674,11 @@ impl<'a> SwiftLowerer<'a> {
 
     fn lower_callback_param(&self, def: &ParamDef, param: &AbiParam) -> SwiftCallbackParam {
         let label = camel_case(param.name.as_str());
-        let (swift_type, ffi_args, decode_prelude) = match SyncInputAbi::from_abi_param(param) {
-            Some(SyncInputAbi::Scalar) => {
+        let (swift_type, ffi_args, decode_prelude) = match InputBinding::from_abi_param(param) {
+            Some(InputBinding::Scalar) => {
                 (self.swift_type(&def.type_expr), vec![label.clone()], None)
             }
-            Some(SyncInputAbi::WirePacket { decode_ops, .. }) => {
+            Some(InputBinding::WirePacket { decode_ops, .. }) => {
                 let len_name = format!("{}Len", label);
                 let reader_decode = emit::emit_reader_read(&decode_ops);
                 (
@@ -754,11 +754,11 @@ impl<'a> SwiftLowerer<'a> {
         let abi_param = self.abi_param_for_semantic(call, &param.name);
         let swift_name = camel_case(param.name.as_str());
 
-        let (swift_type, conversion) = match SyncInputAbi::from_abi_param(abi_param)
+        let (swift_type, conversion) = match InputBinding::from_abi_param(abi_param)
             .expect("semantic param role")
         {
-            SyncInputAbi::Scalar => (self.swift_type(&param.type_expr), SwiftConversion::Direct),
-            SyncInputAbi::PrimitiveSlice {
+            InputBinding::Scalar => (self.swift_type(&param.type_expr), SwiftConversion::Direct),
+            InputBinding::PrimitiveSlice {
                 element_abi,
                 mutability,
                 ..
@@ -778,12 +778,12 @@ impl<'a> SwiftLowerer<'a> {
                     (format!("[{}]", element_type), conversion)
                 }
             }
-            SyncInputAbi::Utf8Slice { .. } => ("String".to_string(), SwiftConversion::ToString),
-            SyncInputAbi::WirePacket { encode_ops, .. } => (
+            InputBinding::Utf8Slice { .. } => ("String".to_string(), SwiftConversion::ToString),
+            InputBinding::WirePacket { encode_ops, .. } => (
                 self.swift_type(&param.type_expr),
                 SwiftConversion::ToWireBuffer { encode: encode_ops },
             ),
-            SyncInputAbi::Handle { class_id, nullable } => {
+            InputBinding::Handle { class_id, nullable } => {
                 let class_name = self.swift_name_for_class(&class_id);
                 let swift_type = if nullable {
                     format!("{}?", class_name)
@@ -798,7 +798,7 @@ impl<'a> SwiftLowerer<'a> {
                     },
                 )
             }
-            SyncInputAbi::CallbackHandle {
+            InputBinding::CallbackHandle {
                 callback_id,
                 nullable,
                 style,
@@ -826,7 +826,7 @@ impl<'a> SwiftLowerer<'a> {
                     )
                 }
             },
-            SyncInputAbi::OutputBuffer { .. } => {
+            InputBinding::OutputBuffer { .. } => {
                 let element_type = self.buffer_element_swift_type(&param.type_expr);
                 (
                     format!("[{}]", element_type),
@@ -850,7 +850,7 @@ impl<'a> SwiftLowerer<'a> {
             .iter()
             .find(|param| {
                 param.name.as_str() == name.as_str()
-                    && SyncInputAbi::from_abi_param(param).is_some()
+                    && InputBinding::from_abi_param(param).is_some()
             })
             .expect("ABI param should exist")
     }
@@ -867,27 +867,48 @@ impl<'a> SwiftLowerer<'a> {
         error: &ErrorTransport,
         returns: &ReturnDef,
     ) -> SwiftReturn {
-        let base = match SyncOutputAbi::from_output_shape(output_shape) {
-            SyncOutputAbi::Unit => SwiftReturn::Void,
-            SyncOutputAbi::Scalar { abi_type } => SwiftReturn::Direct {
+        let base = match OutputBinding::from_output_shape(output_shape) {
+            OutputBinding::Unit => SwiftReturn::Void,
+            OutputBinding::Fast(FastOutputBinding::Scalar { abi_type }) => SwiftReturn::Direct {
                 swift_type: self.abi_to_swift(abi_type),
             },
-            SyncOutputAbi::WirePacket {
+            OutputBinding::Fast(FastOutputBinding::OptionScalar {
                 decode_ops,
                 encode_ops,
-            } => SwiftReturn::FromWireBuffer {
+                ..
+            })
+            | OutputBinding::Fast(FastOutputBinding::ResultScalar {
+                decode_ops,
+                encode_ops,
+                ..
+            })
+            | OutputBinding::Fast(FastOutputBinding::PrimitiveVec {
+                decode_ops,
+                encode_ops,
+                ..
+            })
+            | OutputBinding::Fast(FastOutputBinding::BlittableRecord {
+                decode_ops,
+                encode_ops,
+                ..
+            }) => SwiftReturn::FromWireBuffer {
                 swift_type: self.swift_return_value_type(returns),
                 decode: decode_ops,
                 encode: encode_ops,
             },
-            SyncOutputAbi::Handle { class_id, nullable } => {
+            OutputBinding::Wire(wire) => SwiftReturn::FromWireBuffer {
+                swift_type: self.swift_return_value_type(returns),
+                decode: wire.decode_ops,
+                encode: wire.encode_ops,
+            },
+            OutputBinding::Handle { class_id, nullable } => {
                 let class_name = self.swift_name_for_class(&class_id);
                 SwiftReturn::Handle {
                     class_name,
                     nullable,
                 }
             }
-            SyncOutputAbi::CallbackHandle {
+            OutputBinding::CallbackHandle {
                 callback_id,
                 nullable,
             } => {
@@ -1227,8 +1248,8 @@ impl<'a> SwiftLowerer<'a> {
             .iter()
             .filter(|param| {
                 matches!(
-                    SyncInputAbi::from_abi_param(param),
-                    Some(SyncInputAbi::Scalar | SyncInputAbi::WirePacket { .. })
+                    InputBinding::from_abi_param(param),
+                    Some(InputBinding::Scalar | InputBinding::WirePacket { .. })
                 )
             })
             .collect();
@@ -1260,8 +1281,8 @@ impl<'a> SwiftLowerer<'a> {
         param_def: &ParamDef,
         abi_param: &AbiParam,
     ) -> SwiftClosureTrampolineParam {
-        match SyncInputAbi::from_abi_param(abi_param).expect("closure param role") {
-            SyncInputAbi::WirePacket { decode_ops, .. } => {
+        match InputBinding::from_abi_param(abi_param).expect("closure param role") {
+            InputBinding::WirePacket { decode_ops, .. } => {
                 let ptr_name = format!("ptr{}", idx);
                 let len_name = format!("len{}", idx);
                 let reader_decode = emit::emit_reader_read(&decode_ops);
@@ -1275,7 +1296,7 @@ impl<'a> SwiftLowerer<'a> {
                     decode_expr,
                 }
             }
-            SyncInputAbi::Scalar => {
+            InputBinding::Scalar => {
                 let arg_name = format!("arg{}", idx);
                 SwiftClosureTrampolineParam {
                     name: arg_name.clone(),
@@ -1352,53 +1373,24 @@ impl<'a> SwiftLowerer<'a> {
         let returns_is_result = matches!(returns, ReturnDef::Result { .. });
         let throws = returns_is_result || matches!(error, ErrorTransport::Encoded { .. });
 
-        match AsyncOutputAbi::from_result_shape(result_shape) {
-            AsyncOutputAbi::Unit => SwiftAsyncResult::Void,
-            AsyncOutputAbi::Scalar { abi_type } => SwiftAsyncResult::Direct {
-                swift_type: self.abi_to_swift(abi_type),
-                conversion: SwiftAsyncConversion::None,
-            },
-            AsyncOutputAbi::WirePacket { decode_ops, .. } => {
-                let ok_type = if throws {
-                    match returns {
-                        ReturnDef::Result { ok, .. } => Some(self.swift_type(ok)),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                let (swift_type, err_is_string) = match returns {
-                    ReturnDef::Result { ok, err } => {
-                        (self.swift_type(ok), matches!(err, TypeExpr::String))
-                    }
-                    ReturnDef::Value(ty) => (self.swift_type(ty), false),
-                    ReturnDef::Void => ("Void".to_string(), false),
-                };
-                // when the error transport is not Encoded, the error decode
-                // ops are bundled inside the result decode ops themselves,
-                // so we dig into the first ReadOp::Result to pull out
-                // the err branch
-                let err_decode = match error {
-                    ErrorTransport::Encoded { decode_ops, .. } => decode_ops.clone(),
-                    _ => match decode_ops.ops.first() {
-                        Some(ReadOp::Result { err, .. }) => err.as_ref().clone(),
-                        _ => ReadSeq {
-                            size: SizeExpr::Fixed(0),
-                            ops: Vec::new(),
-                            shape: WireShape::Value,
-                        },
-                    },
-                };
-                SwiftAsyncResult::Encoded {
-                    swift_type,
-                    ok_type,
-                    decode: decode_ops,
-                    throws,
-                    err_decode,
-                    err_is_string,
+        match OutputBinding::from_result_shape(result_shape) {
+            OutputBinding::Unit => SwiftAsyncResult::Void,
+            OutputBinding::Fast(FastOutputBinding::Scalar { abi_type }) => {
+                SwiftAsyncResult::Direct {
+                    swift_type: self.abi_to_swift(abi_type),
+                    conversion: SwiftAsyncConversion::None,
                 }
             }
-            AsyncOutputAbi::Handle { class_id, nullable } => SwiftAsyncResult::Direct {
+            OutputBinding::Fast(FastOutputBinding::OptionScalar { decode_ops, .. })
+            | OutputBinding::Fast(FastOutputBinding::ResultScalar { decode_ops, .. })
+            | OutputBinding::Fast(FastOutputBinding::PrimitiveVec { decode_ops, .. })
+            | OutputBinding::Fast(FastOutputBinding::BlittableRecord { decode_ops, .. }) => {
+                self.encoded_async_result(decode_ops, throws, error, returns)
+            }
+            OutputBinding::Wire(wire) => {
+                self.encoded_async_result(wire.decode_ops, throws, error, returns)
+            }
+            OutputBinding::Handle { class_id, nullable } => SwiftAsyncResult::Direct {
                 swift_type: if nullable {
                     format!("{}?", self.swift_name_for_class(&class_id))
                 } else {
@@ -1409,7 +1401,7 @@ impl<'a> SwiftLowerer<'a> {
                     nullable,
                 },
             },
-            AsyncOutputAbi::CallbackHandle {
+            OutputBinding::CallbackHandle {
                 callback_id,
                 nullable,
             } => SwiftAsyncResult::Direct {
@@ -1422,6 +1414,53 @@ impl<'a> SwiftLowerer<'a> {
                     protocol: pascal_case(callback_id.as_str()),
                     nullable,
                 },
+            },
+        }
+    }
+
+    fn encoded_async_result(
+        &self,
+        decode_ops: ReadSeq,
+        throws: bool,
+        error: &ErrorTransport,
+        returns: &ReturnDef,
+    ) -> SwiftAsyncResult {
+        let ok_type = if throws {
+            match returns {
+                ReturnDef::Result { ok, .. } => Some(self.swift_type(ok)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let (swift_type, err_is_string) = match returns {
+            ReturnDef::Result { ok, err } => (self.swift_type(ok), matches!(err, TypeExpr::String)),
+            ReturnDef::Value(ty) => (self.swift_type(ty), false),
+            ReturnDef::Void => ("Void".to_string(), false),
+        };
+        let err_decode = match error {
+            ErrorTransport::Encoded { decode_ops, .. } => decode_ops.clone(),
+            ErrorTransport::None | ErrorTransport::StatusCode => {
+                self.error_decode_from_result_read(&decode_ops)
+            }
+        };
+        SwiftAsyncResult::Encoded {
+            swift_type,
+            ok_type,
+            decode: decode_ops,
+            throws,
+            err_decode,
+            err_is_string,
+        }
+    }
+
+    fn error_decode_from_result_read(&self, decode_ops: &ReadSeq) -> ReadSeq {
+        match decode_ops.ops.first() {
+            Some(ReadOp::Result { err, .. }) => err.as_ref().clone(),
+            _ => ReadSeq {
+                size: SizeExpr::Fixed(0),
+                ops: Vec::new(),
+                shape: WireShape::Value,
             },
         }
     }

@@ -34,7 +34,7 @@ pub struct TsAsyncFunction {
     pub free_ffi_name: String,
     pub params: Vec<TsParam>,
     pub return_type: Option<String>,
-    pub return_route: TsAsyncTransportRoute,
+    pub return_route: TsOutputRoute,
     pub throws: bool,
     pub err_type: String,
     pub doc: Option<String>,
@@ -168,7 +168,7 @@ pub enum TsClassMethodMode {
 
 #[derive(Debug, Clone)]
 pub struct TsClassSyncMethod {
-    pub return_route: TsSyncTransportRoute,
+    pub return_route: TsOutputRoute,
 }
 
 #[derive(Debug, Clone)]
@@ -178,7 +178,7 @@ pub struct TsClassAsyncMethod {
     pub panic_message_ffi_name: String,
     pub cancel_ffi_name: String,
     pub free_ffi_name: String,
-    pub return_route: TsAsyncTransportRoute,
+    pub return_route: TsOutputRoute,
 }
 
 #[derive(Debug, Clone)]
@@ -352,7 +352,7 @@ pub struct TsFunction {
     pub ffi_name: String,
     pub params: Vec<TsParam>,
     pub return_type: Option<String>,
-    pub return_route: TsSyncTransportRoute,
+    pub return_route: TsOutputRoute,
     pub throws: bool,
     pub err_type: String,
     pub doc: Option<String>,
@@ -538,14 +538,14 @@ mod tests {
 }
 
 #[derive(Debug, Clone)]
-pub enum TsSyncTransportRoute {
+pub enum TsOutputRoute {
     Void,
     Direct { ts_cast: String },
     Packed { decode_expr: String },
     RawPacked { decode_expr: String },
 }
 
-impl TsSyncTransportRoute {
+impl TsOutputRoute {
     pub fn is_void(&self) -> bool {
         matches!(self, Self::Void)
     }
@@ -560,18 +560,6 @@ impl TsSyncTransportRoute {
 
     pub fn is_raw_packed(&self) -> bool {
         matches!(self, Self::RawPacked { .. })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum TsAsyncTransportRoute {
-    Void,
-    Packed { decode_expr: String },
-}
-
-impl TsAsyncTransportRoute {
-    pub fn is_void(&self) -> bool {
-        matches!(self, Self::Void)
     }
 }
 

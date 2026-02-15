@@ -20,9 +20,9 @@ use crate::ir::ops::{
     FieldReadOp, FieldWriteOp, OffsetExpr, ReadOp, ReadSeq, SizeExpr, ValueExpr, WireShape,
     WriteOp, WriteSeq, remap_root_in_seq,
 };
-use crate::ir::plan::{AbiType, CallbackStyle, Mutability};
+use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::ir::{AsyncOutputAbi, SyncHiddenInputAbi, SyncInputAbi, SyncOutputAbi, SyncParamAbi};
+use crate::ir::{FastOutputBinding, InputBinding, OutputBinding, ParamBinding};
 use crate::render::TypeMappings;
 use crate::render::kotlin::emit;
 use crate::render::kotlin::plan::*;
@@ -33,224 +33,20 @@ use crate::render::kotlin::{
 use askama::Template;
 use boltffi_ffi_rules::naming;
 
-#[derive(Debug, Clone)]
-enum KotlinParamRoute {
-    InDirect,
-    InBuffer {
-        len_param: ParamName,
-        mutability: Mutability,
-        element_abi: AbiType,
-    },
-    InString {
-        len_param: ParamName,
-    },
-    InEncoded {
-        len_param: ParamName,
-        decode_ops: ReadSeq,
-        encode_ops: WriteSeq,
-    },
-    InHandle {
-        class_id: ClassId,
-        nullable: bool,
-    },
-    InCallback {
-        callback_id: CallbackId,
-        nullable: bool,
-        style: CallbackStyle,
-    },
-    OutDirect,
-    OutBuffer {
-        len_param: ParamName,
-        decode_ops: ReadSeq,
-    },
-    SyntheticLen {
-        for_param: ParamName,
-    },
-    OutLen {
-        for_param: ParamName,
-    },
-    StatusOut,
+fn param_binding(param: &AbiParam) -> ParamBinding {
+    ParamBinding::from_abi_param(param)
 }
 
-#[derive(Debug, Clone)]
-enum KotlinReturnRoute {
-    Void,
-    Direct(AbiType),
-    Encoded {
-        decode_ops: ReadSeq,
-        encode_ops: WriteSeq,
-    },
-    Handle {
-        class_id: ClassId,
-        nullable: bool,
-    },
-    Callback {
-        callback_id: CallbackId,
-        nullable: bool,
-    },
+fn call_output_binding(call: &AbiCall) -> OutputBinding {
+    OutputBinding::from_abi_call(call)
 }
 
-#[derive(Debug, Clone)]
-enum KotlinAsyncRoute {
-    Void,
-    Direct(AbiType),
-    Encoded {
-        decode_ops: ReadSeq,
-        encode_ops: WriteSeq,
-    },
-    Handle {
-        class_id: ClassId,
-        nullable: bool,
-    },
-    Callback {
-        callback_id: CallbackId,
-        nullable: bool,
-    },
+fn callback_output_binding(callback_method: &AbiCallbackMethod) -> OutputBinding {
+    OutputBinding::from_output_shape(&callback_method.output_shape)
 }
 
-trait AbiParamRouteExt {
-    fn role(&self) -> KotlinParamRoute;
-}
-
-impl AbiParamRouteExt for AbiParam {
-    fn role(&self) -> KotlinParamRoute {
-        match SyncParamAbi::from_abi_param(self) {
-            SyncParamAbi::Input(input_abi) => sync_input_abi_to_param_route(input_abi),
-            SyncParamAbi::Hidden(hidden_abi) => hidden_input_abi_to_param_route(hidden_abi),
-            SyncParamAbi::UnsupportedValue => {
-                panic!("unsupported non-scalar param shape: {}", self.name)
-            }
-        }
-    }
-}
-
-trait AbiOutputRouteExt {
-    fn return_transport(&self) -> KotlinReturnRoute;
-}
-
-impl AbiOutputRouteExt for AbiCall {
-    fn return_transport(&self) -> KotlinReturnRoute {
-        sync_output_abi_to_return_route(SyncOutputAbi::from_output_shape(&self.output_shape))
-    }
-}
-
-impl AbiOutputRouteExt for AbiCallbackMethod {
-    fn return_transport(&self) -> KotlinReturnRoute {
-        sync_output_abi_to_return_route(SyncOutputAbi::from_output_shape(&self.output_shape))
-    }
-}
-
-trait AbiAsyncRouteExt {
-    fn result_transport(&self) -> KotlinAsyncRoute;
-}
-
-impl AbiAsyncRouteExt for crate::ir::abi::AsyncCall {
-    fn result_transport(&self) -> KotlinAsyncRoute {
-        async_output_abi_to_route(AsyncOutputAbi::from_result_shape(&self.result_shape))
-    }
-}
-
-fn sync_input_abi_to_param_route(input_abi: SyncInputAbi) -> KotlinParamRoute {
-    match input_abi {
-        SyncInputAbi::Scalar => KotlinParamRoute::InDirect,
-        SyncInputAbi::Utf8Slice { len_param } => KotlinParamRoute::InString { len_param },
-        SyncInputAbi::PrimitiveSlice {
-            len_param,
-            mutability,
-            element_abi,
-        } => KotlinParamRoute::InBuffer {
-            len_param,
-            mutability,
-            element_abi,
-        },
-        SyncInputAbi::WirePacket {
-            len_param,
-            decode_ops,
-            encode_ops,
-        } => KotlinParamRoute::InEncoded {
-            len_param,
-            decode_ops,
-            encode_ops,
-        },
-        SyncInputAbi::OutputBuffer {
-            len_param,
-            decode_ops,
-        } => KotlinParamRoute::OutBuffer {
-            len_param,
-            decode_ops,
-        },
-        SyncInputAbi::Handle { class_id, nullable } => {
-            KotlinParamRoute::InHandle { class_id, nullable }
-        }
-        SyncInputAbi::CallbackHandle {
-            callback_id,
-            nullable,
-            style,
-        } => KotlinParamRoute::InCallback {
-            callback_id,
-            nullable,
-            style,
-        },
-    }
-}
-
-fn hidden_input_abi_to_param_route(input_abi: SyncHiddenInputAbi) -> KotlinParamRoute {
-    match input_abi {
-        SyncHiddenInputAbi::SyntheticLen { for_param } => {
-            KotlinParamRoute::SyntheticLen { for_param }
-        }
-        SyncHiddenInputAbi::OutLen { for_param } => KotlinParamRoute::OutLen { for_param },
-        SyncHiddenInputAbi::OutDirect => KotlinParamRoute::OutDirect,
-        SyncHiddenInputAbi::StatusOut => KotlinParamRoute::StatusOut,
-    }
-}
-
-fn sync_output_abi_to_return_route(output_abi: SyncOutputAbi) -> KotlinReturnRoute {
-    match output_abi {
-        SyncOutputAbi::Unit => KotlinReturnRoute::Void,
-        SyncOutputAbi::Scalar { abi_type } => KotlinReturnRoute::Direct(abi_type),
-        SyncOutputAbi::WirePacket {
-            decode_ops,
-            encode_ops,
-        } => KotlinReturnRoute::Encoded {
-            decode_ops,
-            encode_ops,
-        },
-        SyncOutputAbi::Handle { class_id, nullable } => {
-            KotlinReturnRoute::Handle { class_id, nullable }
-        }
-        SyncOutputAbi::CallbackHandle {
-            callback_id,
-            nullable,
-        } => KotlinReturnRoute::Callback {
-            callback_id,
-            nullable,
-        },
-    }
-}
-
-fn async_output_abi_to_route(output_abi: AsyncOutputAbi) -> KotlinAsyncRoute {
-    match output_abi {
-        AsyncOutputAbi::Unit => KotlinAsyncRoute::Void,
-        AsyncOutputAbi::Scalar { abi_type } => KotlinAsyncRoute::Direct(abi_type),
-        AsyncOutputAbi::WirePacket {
-            decode_ops,
-            encode_ops,
-        } => KotlinAsyncRoute::Encoded {
-            decode_ops,
-            encode_ops,
-        },
-        AsyncOutputAbi::Handle { class_id, nullable } => {
-            KotlinAsyncRoute::Handle { class_id, nullable }
-        }
-        AsyncOutputAbi::CallbackHandle {
-            callback_id,
-            nullable,
-        } => KotlinAsyncRoute::Callback {
-            callback_id,
-            nullable,
-        },
-    }
+fn async_output_binding(async_call: &crate::ir::abi::AsyncCall) -> OutputBinding {
+    OutputBinding::from_result_shape(&async_call.result_shape)
 }
 
 pub struct KotlinLowerer<'a> {
@@ -1019,6 +815,7 @@ impl<'a> KotlinLowerer<'a> {
 
     fn lower_function(&self, func: &FunctionDef) -> KotlinFunction {
         let call = self.abi_call_for_function(func);
+        let output_route = call_output_binding(call);
         let signature_params = func
             .params
             .iter()
@@ -1033,10 +830,10 @@ impl<'a> KotlinLowerer<'a> {
             .map(|w| w.binding_name.clone())
             .collect();
         let native_args = self.native_args_for_params(call, &wire_writers);
-        let return_type = self.kotlin_return_type_from_def(&func.returns, &call.return_transport());
-        let return_abi = self.kotlin_return_abi(&call.output_shape, &call.return_transport());
-        let decode_expr = self.decode_expr_for_call_return(&call.return_transport(), &func.returns);
-        let is_blittable_return = self.is_blittable_return(&call.return_transport());
+        let return_type = self.kotlin_return_type_from_def(&func.returns, &output_route);
+        let return_abi = self.kotlin_return_abi(&output_route);
+        let decode_expr = self.decode_expr_for_call_return(&output_route, &func.returns);
+        let is_blittable_return = self.is_blittable_return(&output_route);
         let async_call = match &call.mode {
             CallMode::Async(_) => Some(self.async_call_for_function(func, call)),
             CallMode::Sync => None,
@@ -1137,6 +934,7 @@ impl<'a> KotlinLowerer<'a> {
     fn lower_method(&self, class: &ClassDef, method: &MethodDef) -> KotlinMethod {
         let call = Self::strip_receiver(self.abi_call_for_method(class, method));
         let call = &call;
+        let output_route = call_output_binding(call);
         let wire_writers = self.wire_writers_for_params(call);
         let wire_writer_closes: Vec<String> = wire_writers
             .iter()
@@ -1151,12 +949,10 @@ impl<'a> KotlinLowerer<'a> {
                 kotlin_type: self.kotlin_type(&param.type_expr),
             })
             .collect::<Vec<_>>();
-        let return_type =
-            self.kotlin_return_type_from_def(&method.returns, &call.return_transport());
-        let return_abi = self.kotlin_return_abi(&call.output_shape, &call.return_transport());
-        let decode_expr =
-            self.decode_expr_for_call_return(&call.return_transport(), &method.returns);
-        let is_blittable_return = self.is_blittable_return(&call.return_transport());
+        let return_type = self.kotlin_return_type_from_def(&method.returns, &output_route);
+        let return_abi = self.kotlin_return_abi(&output_route);
+        let decode_expr = self.decode_expr_for_call_return(&output_route, &method.returns);
+        let is_blittable_return = self.is_blittable_return(&output_route);
         let ffi_name = call.symbol.as_str().to_string();
         let include_handle = method.receiver != Receiver::Static;
         let err_type = self.error_type_name(&method.returns);
@@ -1395,6 +1191,7 @@ impl<'a> KotlinLowerer<'a> {
         method: &CallbackMethodDef,
     ) -> KotlinCallbackMethod {
         let abi_method = self.abi_callback_method(&callback.id, &method.id);
+        let output_route = callback_output_binding(abi_method);
         let abi_param_map: HashMap<_, _> = abi_method
             .params
             .iter()
@@ -1408,12 +1205,8 @@ impl<'a> KotlinLowerer<'a> {
                 Some(self.lower_callback_param(def, abi_param))
             })
             .collect();
-        let return_info = self.callback_return_info(
-            &method.returns,
-            &abi_method.output_shape,
-            &abi_method.return_transport(),
-            &abi_method.error,
-        );
+        let return_info =
+            self.callback_return_info(&method.returns, &output_route, &abi_method.error);
         KotlinCallbackMethod {
             name: NamingConvention::method_name(method.id.as_str()),
             ffi_name: abi_method.vtable_field.as_str().to_string(),
@@ -1429,6 +1222,7 @@ impl<'a> KotlinLowerer<'a> {
         method: &CallbackMethodDef,
     ) -> KotlinAsyncCallbackMethod {
         let abi_method = self.abi_callback_method(&callback.id, &method.id);
+        let output_route = callback_output_binding(abi_method);
         let abi_param_map: HashMap<_, _> = abi_method
             .params
             .iter()
@@ -1442,12 +1236,8 @@ impl<'a> KotlinLowerer<'a> {
                 Some(self.lower_callback_param(def, abi_param))
             })
             .collect();
-        let return_info = self.callback_return_info(
-            &method.returns,
-            &abi_method.output_shape,
-            &abi_method.return_transport(),
-            &abi_method.error,
-        );
+        let return_info =
+            self.callback_return_info(&method.returns, &output_route, &abi_method.error);
         let invoker = self.async_callback_invoker(&return_info);
         KotlinAsyncCallbackMethod {
             name: NamingConvention::method_name(method.id.as_str()),
@@ -1462,20 +1252,23 @@ impl<'a> KotlinLowerer<'a> {
     fn lower_callback_param(&self, def: &ParamDef, param: &AbiParam) -> KotlinCallbackParam {
         let name = NamingConvention::param_name(param.name.as_str());
         let kotlin_type = self.kotlin_type(&def.type_expr);
-        match SyncInputAbi::from_abi_param(param).expect("callback param role") {
-            SyncInputAbi::Scalar => KotlinCallbackParam {
+        match InputBinding::from_abi_param(param).expect("callback param role") {
+            InputBinding::Scalar => KotlinCallbackParam {
                 name: name.clone(),
                 kotlin_type,
                 jni_type: self.jni_type_for_abi(&param.ffi_type),
                 conversion: self.callback_direct_conversion(&def.type_expr, &name),
             },
-            SyncInputAbi::WirePacket { decode_ops, .. } => KotlinCallbackParam {
+            InputBinding::WirePacket { decode_ops, .. } => KotlinCallbackParam {
                 name: name.clone(),
                 kotlin_type,
                 jni_type: "ByteBuffer".to_string(),
                 conversion: self.callback_encoded_conversion(&decode_ops, &name),
             },
-            _ => panic!("unsupported callback param role: {:?}", param.role()),
+            _ => panic!(
+                "unsupported callback param role: {:?}",
+                param_binding(param)
+            ),
         }
     }
 
@@ -1514,36 +1307,34 @@ impl<'a> KotlinLowerer<'a> {
     fn callback_return_info(
         &self,
         returns: &ReturnDef,
-        output_shape: &OutputShape,
-        transport: &KotlinReturnRoute,
+        transport: &OutputBinding,
         error: &ErrorTransport,
     ) -> Option<KotlinCallbackReturn> {
         let kotlin_type = self.kotlin_return_type_from_def(returns, transport)?;
-        let (jni_type, default_value, to_jni) = match SyncOutputAbi::from_output_shape(output_shape)
-        {
-            SyncOutputAbi::Unit => return None,
-            SyncOutputAbi::Scalar { abi_type } => (
-                self.jni_type_for_abi(&abi_type),
-                self.callback_default_value_for_abi(&abi_type),
-                self.callback_return_cast_for_abi(&abi_type),
+        let (jni_type, default_value, to_jni) = match transport {
+            OutputBinding::Unit => return None,
+            OutputBinding::Fast(FastOutputBinding::Scalar { abi_type }) => (
+                self.jni_type_for_abi(abi_type),
+                self.callback_default_value_for_abi(abi_type),
+                self.callback_return_cast_for_abi(abi_type),
             ),
-            SyncOutputAbi::WirePacket { encode_ops, .. } => (
+            OutputBinding::Fast(_) | OutputBinding::Wire(_) => (
                 "ByteArray".to_string(),
                 "byteArrayOf()".to_string(),
-                self.callback_return_wire_encode(&encode_ops),
+                self.callback_return_wire_encode(transport.encode_ops().expect("encoded return")),
             ),
-            SyncOutputAbi::Handle { class_id, nullable } => (
+            OutputBinding::Handle { class_id, nullable } => (
                 "Long".to_string(),
                 "0L".to_string(),
-                self.callback_return_handle_cast(&class_id, nullable),
+                self.callback_return_handle_cast(class_id, *nullable),
             ),
-            SyncOutputAbi::CallbackHandle {
+            OutputBinding::CallbackHandle {
                 callback_id,
                 nullable,
             } => (
                 "Long".to_string(),
                 "0L".to_string(),
-                self.callback_return_callback_cast(&callback_id, nullable),
+                self.callback_return_callback_cast(callback_id, *nullable),
             ),
         };
         let (error_type, error_is_throwable) = match returns {
@@ -1649,17 +1440,15 @@ impl<'a> KotlinLowerer<'a> {
 
     fn build_result_wire_encode(
         &self,
-        transport: &KotlinReturnRoute,
+        transport: &OutputBinding,
         error: &ErrorTransport,
     ) -> Option<String> {
-        let (ok_encode_ops, err_encode_ops) = match (transport, error) {
-            (
-                KotlinReturnRoute::Encoded { encode_ops, .. },
-                ErrorTransport::Encoded {
-                    encode_ops: Some(err_encode_ops),
-                    ..
-                },
-            ) => (encode_ops, err_encode_ops),
+        let ok_encode_ops = transport.encode_ops()?;
+        let err_encode_ops = match error {
+            ErrorTransport::Encoded {
+                encode_ops: Some(err_encode_ops),
+                ..
+            } => err_encode_ops,
             _ => return None,
         };
 
@@ -1727,7 +1516,7 @@ impl<'a> KotlinLowerer<'a> {
             .abi
             .calls
             .iter()
-            .filter(|call| matches!(call.return_transport(), KotlinReturnRoute::Encoded { .. }))
+            .filter(|call| call_output_binding(call).decode_ops().is_some())
             .filter(|call| !declared_symbols.contains(call.symbol.as_str()))
             .map(|call| KotlinNativeWireFunction {
                 ffi_name: call.symbol.as_str().to_string(),
@@ -1761,8 +1550,7 @@ impl<'a> KotlinLowerer<'a> {
                         let abi_method = self.abi_callback_method(&callback.id, &method.id);
                         let return_info = self.callback_return_info(
                             &method.returns,
-                            &abi_method.output_shape,
-                            &abi_method.return_transport(),
+                            &callback_output_binding(abi_method),
                             &abi_method.error,
                         );
                         self.async_callback_invoker(&return_info)
@@ -1794,10 +1582,10 @@ impl<'a> KotlinLowerer<'a> {
 
     fn lower_native_function(&self, func: &FunctionDef) -> KotlinNativeFunction {
         let call = self.abi_call_for_function(func);
-        let return_jni_type = self.jni_type_for_sync_output(SyncOutputAbi::from_abi_call(call));
+        let return_jni_type = self.jni_type_for_output(OutputBinding::from_abi_call(call));
         let complete_return_jni_type = match &call.mode {
             CallMode::Async(async_call) => {
-                self.jni_type_for_async_output(AsyncOutputAbi::from_async_call(async_call))
+                self.jni_type_for_output(OutputBinding::from_async_call(async_call))
             }
             CallMode::Sync => String::new(),
         };
@@ -1872,7 +1660,7 @@ impl<'a> KotlinLowerer<'a> {
                         })
                         .collect(),
                     return_jni_type: self
-                        .jni_type_for_async_output(AsyncOutputAbi::from_async_call(async_call)),
+                        .jni_type_for_output(OutputBinding::from_async_call(async_call)),
                 }
             })
             .collect();
@@ -1922,26 +1710,17 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     fn jni_type_for_return(&self, call: &AbiCall) -> String {
-        self.jni_type_for_sync_output(SyncOutputAbi::from_output_shape(&call.output_shape))
+        self.jni_type_for_output(OutputBinding::from_output_shape(&call.output_shape))
     }
 
-    fn jni_type_for_sync_output(&self, output: SyncOutputAbi) -> String {
+    fn jni_type_for_output(&self, output: OutputBinding) -> String {
         match output {
-            SyncOutputAbi::Unit => "Unit".to_string(),
-            SyncOutputAbi::Scalar { abi_type } => self.jni_type_for_abi(&abi_type),
-            SyncOutputAbi::WirePacket { .. } => "ByteArray?".to_string(),
-            SyncOutputAbi::Handle { .. } | SyncOutputAbi::CallbackHandle { .. } => {
-                "Long".to_string()
+            OutputBinding::Unit => "Unit".to_string(),
+            OutputBinding::Fast(FastOutputBinding::Scalar { abi_type }) => {
+                self.jni_type_for_abi(&abi_type)
             }
-        }
-    }
-
-    fn jni_type_for_async_output(&self, output: AsyncOutputAbi) -> String {
-        match output {
-            AsyncOutputAbi::Unit => "Unit".to_string(),
-            AsyncOutputAbi::Scalar { abi_type } => self.jni_type_for_abi(&abi_type),
-            AsyncOutputAbi::WirePacket { .. } => "ByteArray?".to_string(),
-            AsyncOutputAbi::Handle { .. } | AsyncOutputAbi::CallbackHandle { .. } => {
+            OutputBinding::Fast(_) | OutputBinding::Wire(_) => "ByteArray?".to_string(),
+            OutputBinding::Handle { .. } | OutputBinding::CallbackHandle { .. } => {
                 "Long".to_string()
             }
         }
@@ -1968,56 +1747,51 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     fn jni_param_mapping(&self, param: &AbiParam) -> JniParamMapping {
-        match &param.role() {
-            KotlinParamRoute::InDirect => JniParamMapping {
+        match param_binding(param) {
+            ParamBinding::Input(InputBinding::Scalar) => JniParamMapping {
                 role: JniParamRole::Direct {
                     jni_type: self.jni_type_for_abi(&param.ffi_type),
                 },
                 len_companion: None,
             },
-            KotlinParamRoute::InString { len_param } => JniParamMapping {
+            ParamBinding::Input(InputBinding::Utf8Slice { len_param }) => JniParamMapping {
                 role: JniParamRole::StringParam,
-                len_companion: Some(len_param.clone()),
+                len_companion: Some(len_param),
             },
-            KotlinParamRoute::InBuffer {
+            ParamBinding::Input(InputBinding::PrimitiveSlice {
                 element_abi,
                 len_param,
                 ..
-            } => JniParamMapping {
+            }) => JniParamMapping {
                 role: JniParamRole::Buffer {
-                    jni_type: self.jni_buffer_type(element_abi),
+                    jni_type: self.jni_buffer_type(&element_abi),
                 },
-                len_companion: Some(len_param.clone()),
+                len_companion: Some(len_param),
             },
-            KotlinParamRoute::InEncoded { len_param, .. } => JniParamMapping {
+            ParamBinding::Input(InputBinding::WirePacket { len_param, .. }) => JniParamMapping {
                 role: JniParamRole::Encoded,
-                len_companion: Some(len_param.clone()),
+                len_companion: Some(len_param),
             },
-            KotlinParamRoute::InHandle { nullable, .. } => JniParamMapping {
-                role: JniParamRole::Handle {
-                    nullable: *nullable,
-                },
+            ParamBinding::Input(InputBinding::Handle { nullable, .. }) => JniParamMapping {
+                role: JniParamRole::Handle { nullable },
                 len_companion: None,
             },
-            KotlinParamRoute::InCallback {
+            ParamBinding::Input(InputBinding::CallbackHandle {
                 callback_id,
                 nullable,
                 ..
-            } => JniParamMapping {
+            }) => JniParamMapping {
                 role: JniParamRole::Callback {
-                    callback_id: callback_id.clone(),
-                    nullable: *nullable,
+                    callback_id,
+                    nullable,
                 },
                 len_companion: None,
             },
-            KotlinParamRoute::OutBuffer { len_param, .. } => JniParamMapping {
+            ParamBinding::Input(InputBinding::OutputBuffer { len_param, .. }) => JniParamMapping {
                 role: JniParamRole::OutBuffer,
-                len_companion: Some(len_param.clone()),
+                len_companion: Some(len_param),
             },
-            KotlinParamRoute::SyntheticLen { .. }
-            | KotlinParamRoute::OutDirect
-            | KotlinParamRoute::OutLen { .. }
-            | KotlinParamRoute::StatusOut => JniParamMapping {
+            ParamBinding::Hidden(_) | ParamBinding::UnsupportedValue => JniParamMapping {
                 role: JniParamRole::Hidden,
                 len_companion: None,
             },
@@ -2177,7 +1951,7 @@ impl<'a> KotlinLowerer<'a> {
     fn kotlin_return_type_from_def(
         &self,
         returns: &ReturnDef,
-        transport: &KotlinReturnRoute,
+        transport: &OutputBinding,
     ) -> Option<String> {
         let base = match returns {
             ReturnDef::Void => None,
@@ -2188,18 +1962,14 @@ impl<'a> KotlinLowerer<'a> {
             },
         };
         match transport {
-            KotlinReturnRoute::Handle { nullable, .. }
-            | KotlinReturnRoute::Callback { nullable, .. }
-                if *nullable =>
-            {
-                base.map(|ty| {
-                    if ty.ends_with('?') {
-                        ty
-                    } else {
-                        format!("{}?", ty)
-                    }
-                })
-            }
+            OutputBinding::Handle { nullable: true, .. }
+            | OutputBinding::CallbackHandle { nullable: true, .. } => base.map(|ty| {
+                if ty.ends_with('?') {
+                    ty
+                } else {
+                    format!("{}?", ty)
+                }
+            }),
             _ => base,
         }
     }
@@ -2265,49 +2035,28 @@ impl<'a> KotlinLowerer<'a> {
         }
     }
 
-    fn kotlin_return_abi(
-        &self,
-        output_shape: &OutputShape,
-        _returns: &KotlinReturnRoute,
-    ) -> KotlinReturnAbi {
-        match SyncOutputAbi::from_output_shape(output_shape) {
-            SyncOutputAbi::Unit => KotlinReturnAbi::Unit,
-            SyncOutputAbi::Scalar { abi_type } => KotlinReturnAbi::Direct {
-                kotlin_cast: self.kotlin_return_cast(&abi_type),
-            },
-            SyncOutputAbi::Handle { class_id, nullable } => KotlinReturnAbi::Direct {
-                kotlin_cast: self.kotlin_handle_return_cast(&class_id, nullable),
-            },
-            SyncOutputAbi::CallbackHandle {
-                callback_id,
-                nullable,
-            } => KotlinReturnAbi::Direct {
-                kotlin_cast: self.kotlin_callback_return_cast(&callback_id, nullable),
-            },
-            SyncOutputAbi::WirePacket { .. } => KotlinReturnAbi::WireEncoded,
-        }
+    fn kotlin_return_abi(&self, output: &OutputBinding) -> KotlinOutputRoute {
+        self.kotlin_return_abi_for_binding(output.clone())
     }
 
-    fn kotlin_return_abi_for_async(
-        &self,
-        result_shape: &OutputShape,
-        _result: &KotlinAsyncRoute,
-    ) -> KotlinReturnAbi {
-        match AsyncOutputAbi::from_result_shape(result_shape) {
-            AsyncOutputAbi::Unit => KotlinReturnAbi::Unit,
-            AsyncOutputAbi::Scalar { abi_type } => KotlinReturnAbi::Direct {
-                kotlin_cast: self.kotlin_return_cast(&abi_type),
-            },
-            AsyncOutputAbi::Handle { class_id, nullable } => KotlinReturnAbi::Direct {
+    fn kotlin_return_abi_for_binding(&self, output_binding: OutputBinding) -> KotlinOutputRoute {
+        match output_binding {
+            OutputBinding::Unit => KotlinOutputRoute::Unit,
+            OutputBinding::Fast(FastOutputBinding::Scalar { abi_type }) => {
+                KotlinOutputRoute::Direct {
+                    kotlin_cast: self.kotlin_return_cast(&abi_type),
+                }
+            }
+            OutputBinding::Handle { class_id, nullable } => KotlinOutputRoute::Direct {
                 kotlin_cast: self.kotlin_handle_return_cast(&class_id, nullable),
             },
-            AsyncOutputAbi::CallbackHandle {
+            OutputBinding::CallbackHandle {
                 callback_id,
                 nullable,
-            } => KotlinReturnAbi::Direct {
+            } => KotlinOutputRoute::Direct {
                 kotlin_cast: self.kotlin_callback_return_cast(&callback_id, nullable),
             },
-            AsyncOutputAbi::WirePacket { .. } => KotlinReturnAbi::WireEncoded,
+            OutputBinding::Fast(_) | OutputBinding::Wire(_) => KotlinOutputRoute::WireEncoded,
         }
     }
 
@@ -2469,7 +2218,11 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     fn is_instance_receiver(param: &AbiParam) -> bool {
-        param.name.as_str() == "self" && matches!(param.role(), KotlinParamRoute::InHandle { .. })
+        param.name.as_str() == "self"
+            && matches!(
+                param_binding(param),
+                ParamBinding::Input(InputBinding::Handle { .. })
+            )
     }
 
     fn strip_receiver(call: &AbiCall) -> AbiCall {
@@ -2486,27 +2239,31 @@ impl<'a> KotlinLowerer<'a> {
 
     fn decode_expr_for_call_return(
         &self,
-        returns: &KotlinReturnRoute,
+        returns: &OutputBinding,
         returns_def: &ReturnDef,
     ) -> String {
-        match returns {
-            KotlinReturnRoute::Void | KotlinReturnRoute::Direct(_) => String::new(),
-            KotlinReturnRoute::Encoded { decode_ops, .. } => {
-                if self.is_throwing_return(returns_def) {
-                    self.decode_result_expr(returns_def, decode_ops)
-                } else if self.is_blittable_return(returns) {
-                    self.decode_blittable_return(decode_ops)
-                } else {
-                    emit::emit_reader_read(decode_ops)
+        if let Some(decode_ops) = returns.decode_ops() {
+            if self.is_throwing_return(returns_def) {
+                self.decode_result_expr(returns_def, decode_ops)
+            } else if self.is_blittable_return(returns) {
+                self.decode_blittable_return(decode_ops)
+            } else {
+                emit::emit_reader_read(decode_ops)
+            }
+        } else {
+            match returns {
+                OutputBinding::Unit | OutputBinding::Fast(FastOutputBinding::Scalar { .. }) => {
+                    String::new()
                 }
+                OutputBinding::Handle { class_id, nullable } => {
+                    self.decode_handle_return(class_id, *nullable, "result")
+                }
+                OutputBinding::CallbackHandle {
+                    callback_id,
+                    nullable,
+                } => self.decode_callback_return(callback_id, *nullable, "result"),
+                OutputBinding::Fast(_) | OutputBinding::Wire(_) => unreachable!(),
             }
-            KotlinReturnRoute::Handle { class_id, nullable } => {
-                self.decode_handle_return(class_id, *nullable, "result")
-            }
-            KotlinReturnRoute::Callback {
-                callback_id,
-                nullable,
-            } => self.decode_callback_return(callback_id, *nullable, "result"),
         }
     }
 
@@ -2560,13 +2317,11 @@ impl<'a> KotlinLowerer<'a> {
         }
     }
 
-    fn is_blittable_return(&self, returns: &KotlinReturnRoute) -> bool {
-        match returns {
-            KotlinReturnRoute::Encoded { decode_ops, .. } => {
-                self.is_blittable_decode_seq(decode_ops)
-            }
-            _ => false,
-        }
+    fn is_blittable_return(&self, returns: &OutputBinding) -> bool {
+        returns
+            .decode_ops()
+            .map(|decode_ops| self.is_blittable_decode_seq(decode_ops))
+            .unwrap_or(false)
     }
 
     fn decode_blittable_return(&self, decode_ops: &ReadSeq) -> String {
@@ -2598,74 +2353,17 @@ impl<'a> KotlinLowerer<'a> {
             CallMode::Async(async_call) => async_call,
             CallMode::Sync => panic!("async method missing async call"),
         };
-        let decode_expr = self.decode_expr_for_async_result(
-            &async_call.result_shape,
-            &async_call.result_transport(),
-            &method.returns,
-        );
-        let is_blittable_return = self
-            .is_blittable_async_result(&async_call.result_shape, &async_call.result_transport());
+        let result_route = async_output_binding(async_call);
+        let decode_expr = self.decode_expr_for_call_return(&result_route, &method.returns);
+        let is_blittable_return = self.is_blittable_return(&result_route);
         KotlinAsyncCall {
             poll: async_call.poll.as_str().to_string(),
             complete: async_call.complete.as_str().to_string(),
             cancel: async_call.cancel.as_str().to_string(),
             free: async_call.free.as_str().to_string(),
-            return_abi: self.kotlin_return_abi_for_async(
-                &async_call.result_shape,
-                &async_call.result_transport(),
-            ),
+            return_abi: self.kotlin_return_abi(&result_route),
             decode_expr,
             is_blittable_return,
-        }
-    }
-
-    fn decode_expr_for_async_result(
-        &self,
-        result_shape: &OutputShape,
-        _result: &KotlinAsyncRoute,
-        returns: &ReturnDef,
-    ) -> String {
-        match AsyncOutputAbi::from_result_shape(result_shape) {
-            AsyncOutputAbi::Unit | AsyncOutputAbi::Scalar { .. } => String::new(),
-            AsyncOutputAbi::WirePacket { decode_ops, .. } => {
-                if self.is_throwing_return(returns) {
-                    self.decode_result_expr(returns, &decode_ops)
-                } else if self.is_blittable_decode_seq(&decode_ops) {
-                    self.decode_blittable_return(&decode_ops)
-                } else {
-                    emit::emit_reader_read(&decode_ops)
-                }
-            }
-            AsyncOutputAbi::Handle { class_id, nullable } => {
-                self.decode_handle_return(&class_id, nullable, "result")
-            }
-            AsyncOutputAbi::CallbackHandle {
-                callback_id,
-                nullable,
-            } => self.decode_callback_return(&callback_id, nullable, "result"),
-        }
-    }
-
-    fn is_blittable_async_return(&self, call: &AbiCall) -> bool {
-        match &call.mode {
-            CallMode::Async(async_call) => self.is_blittable_async_result(
-                &async_call.result_shape,
-                &async_call.result_transport(),
-            ),
-            CallMode::Sync => false,
-        }
-    }
-
-    fn is_blittable_async_result(
-        &self,
-        result_shape: &OutputShape,
-        _result: &KotlinAsyncRoute,
-    ) -> bool {
-        match AsyncOutputAbi::from_result_shape(result_shape) {
-            AsyncOutputAbi::WirePacket { decode_ops, .. } => {
-                self.is_blittable_decode_seq(&decode_ops)
-            }
-            _ => false,
         }
     }
 
@@ -2694,15 +2392,10 @@ impl<'a> KotlinLowerer<'a> {
             CallMode::Async(async_call) => async_call,
             CallMode::Sync => panic!("async function missing async call"),
         };
-        let return_abi = self
-            .kotlin_return_abi_for_async(&async_call.result_shape, &async_call.result_transport());
-        let decode_expr = self.decode_expr_for_async_result(
-            &async_call.result_shape,
-            &async_call.result_transport(),
-            &func.returns,
-        );
-        let is_blittable_return = self
-            .is_blittable_async_result(&async_call.result_shape, &async_call.result_transport());
+        let result_route = async_output_binding(async_call);
+        let return_abi = self.kotlin_return_abi(&result_route);
+        let decode_expr = self.decode_expr_for_call_return(&result_route, &func.returns);
+        let is_blittable_return = self.is_blittable_return(&result_route);
         KotlinAsyncCall {
             poll: async_call.poll.as_str().to_string(),
             complete: async_call.complete.as_str().to_string(),
@@ -3303,16 +2996,10 @@ impl<'a> KotlinLowerer<'a> {
         sync_returns.chain(async_returns).collect()
     }
 
-    fn blittable_record_from_decode_ops(&self, transport: &KotlinReturnRoute) -> Option<String> {
-        match transport {
-            KotlinReturnRoute::Encoded { decode_ops, .. } => {
-                self.blittable_record_id_from_read_seq(decode_ops)
-            }
-            KotlinReturnRoute::Void
-            | KotlinReturnRoute::Direct(_)
-            | KotlinReturnRoute::Handle { .. }
-            | KotlinReturnRoute::Callback { .. } => None,
-        }
+    fn blittable_record_from_decode_ops(&self, transport: &OutputBinding) -> Option<String> {
+        transport
+            .decode_ops()
+            .and_then(|decode_ops| self.blittable_record_id_from_read_seq(decode_ops))
     }
 
     fn blittable_record_id_from_read_seq(&self, seq: &ReadSeq) -> Option<String> {
@@ -3429,8 +3116,8 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     fn out_buffer_record_id(&self, param: &AbiParam) -> Option<String> {
-        match SyncInputAbi::from_abi_param(param) {
-            Some(SyncInputAbi::OutputBuffer { decode_ops, .. }) => match decode_ops.ops.first() {
+        match InputBinding::from_abi_param(param) {
+            Some(InputBinding::OutputBuffer { decode_ops, .. }) => match decode_ops.ops.first() {
                 Some(ReadOp::Vec {
                     element_type: TypeExpr::Record(id),
                     ..
@@ -3443,58 +3130,42 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     fn input_read_ops(&self, param: &AbiParam) -> Option<ReadSeq> {
-        match SyncInputAbi::from_abi_param(param) {
-            Some(SyncInputAbi::WirePacket { decode_ops, .. }) => Some(decode_ops),
-            Some(SyncInputAbi::OutputBuffer { decode_ops, .. }) => Some(decode_ops),
+        match InputBinding::from_abi_param(param) {
+            Some(InputBinding::WirePacket { decode_ops, .. }) => Some(decode_ops),
+            Some(InputBinding::OutputBuffer { decode_ops, .. }) => Some(decode_ops),
             _ => None,
         }
     }
 
     fn input_write_ops(&self, param: &AbiParam) -> Option<WriteSeq> {
-        match SyncInputAbi::from_abi_param(param) {
-            Some(SyncInputAbi::WirePacket { encode_ops, .. }) => Some(encode_ops),
+        match InputBinding::from_abi_param(param) {
+            Some(InputBinding::WirePacket { encode_ops, .. }) => Some(encode_ops),
             _ => None,
         }
     }
 
     fn sync_output_read_ops(&self, output_shape: &OutputShape) -> Option<ReadSeq> {
-        match SyncOutputAbi::from_output_shape(output_shape) {
-            SyncOutputAbi::WirePacket { decode_ops, .. } => Some(decode_ops),
-            SyncOutputAbi::Unit
-            | SyncOutputAbi::Scalar { .. }
-            | SyncOutputAbi::Handle { .. }
-            | SyncOutputAbi::CallbackHandle { .. } => None,
-        }
+        OutputBinding::from_output_shape(output_shape)
+            .decode_ops()
+            .cloned()
     }
 
     fn sync_output_write_ops(&self, output_shape: &OutputShape) -> Option<WriteSeq> {
-        match SyncOutputAbi::from_output_shape(output_shape) {
-            SyncOutputAbi::WirePacket { encode_ops, .. } => Some(encode_ops),
-            SyncOutputAbi::Unit
-            | SyncOutputAbi::Scalar { .. }
-            | SyncOutputAbi::Handle { .. }
-            | SyncOutputAbi::CallbackHandle { .. } => None,
-        }
+        OutputBinding::from_output_shape(output_shape)
+            .encode_ops()
+            .cloned()
     }
 
     fn async_output_read_ops(&self, result_shape: &OutputShape) -> Option<ReadSeq> {
-        match AsyncOutputAbi::from_result_shape(result_shape) {
-            AsyncOutputAbi::WirePacket { decode_ops, .. } => Some(decode_ops),
-            AsyncOutputAbi::Unit
-            | AsyncOutputAbi::Scalar { .. }
-            | AsyncOutputAbi::Handle { .. }
-            | AsyncOutputAbi::CallbackHandle { .. } => None,
-        }
+        OutputBinding::from_result_shape(result_shape)
+            .decode_ops()
+            .cloned()
     }
 
     fn async_output_write_ops(&self, result_shape: &OutputShape) -> Option<WriteSeq> {
-        match AsyncOutputAbi::from_result_shape(result_shape) {
-            AsyncOutputAbi::WirePacket { encode_ops, .. } => Some(encode_ops),
-            AsyncOutputAbi::Unit
-            | AsyncOutputAbi::Scalar { .. }
-            | AsyncOutputAbi::Handle { .. }
-            | AsyncOutputAbi::CallbackHandle { .. } => None,
-        }
+        OutputBinding::from_result_shape(result_shape)
+            .encode_ops()
+            .cloned()
     }
 }
 

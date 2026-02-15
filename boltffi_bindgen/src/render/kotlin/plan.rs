@@ -201,7 +201,7 @@ pub struct KotlinFunction {
     pub throws: bool,
     pub err_type: String,
     pub ffi_name: String,
-    pub return_abi: KotlinReturnAbi,
+    pub return_abi: KotlinOutputRoute,
     pub async_call: Option<KotlinAsyncCall>,
     pub decode_expr: String,
     pub is_blittable_return: bool,
@@ -505,19 +505,19 @@ pub struct KotlinAsyncCall {
     pub complete: String,
     pub cancel: String,
     pub free: String,
-    pub return_abi: KotlinReturnAbi,
+    pub return_abi: KotlinOutputRoute,
     pub decode_expr: String,
     pub is_blittable_return: bool,
 }
 
 #[derive(Clone)]
-pub enum KotlinReturnAbi {
+pub enum KotlinOutputRoute {
     Unit,
     Direct { kotlin_cast: String },
     WireEncoded,
 }
 
-impl KotlinReturnAbi {
+impl KotlinOutputRoute {
     pub fn is_unit(&self) -> bool {
         matches!(self, Self::Unit)
     }
