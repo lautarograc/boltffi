@@ -13,6 +13,7 @@
 //! Backends in [`render`](crate::render) consume the [`AbiContract`] and emit source code.
 //! They never see [`CodecPlan`], which stays internal to the lowering step.
 
+pub mod binding;
 pub mod build;
 pub mod codec;
 pub mod contract;
@@ -21,10 +22,10 @@ pub mod ids;
 pub mod lower;
 pub mod ops;
 pub mod plan;
-pub mod transport;
 pub mod types;
 pub mod validate;
 
+pub use binding::*;
 pub use build::build_contract;
 pub use codec::*;
 pub use contract::*;
@@ -33,7 +34,6 @@ pub use ids::*;
 pub use lower::Lowerer;
 pub use ops::*;
 pub use plan::*;
-pub use transport::*;
 pub use types::*;
 pub use validate::{ValidationError, validate_contract};
 pub mod abi;
