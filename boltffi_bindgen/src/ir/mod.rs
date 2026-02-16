@@ -21,6 +21,7 @@ pub mod ids;
 pub mod lower;
 pub mod ops;
 pub mod plan;
+pub mod transport;
 pub mod types;
 pub mod validate;
 
@@ -32,6 +33,7 @@ pub use ids::*;
 pub use lower::Lowerer;
 pub use ops::*;
 pub use plan::*;
+pub use transport::*;
 pub use types::*;
 pub use validate::{ValidationError, validate_contract};
 pub mod abi;
