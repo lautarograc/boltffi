@@ -159,7 +159,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
 
         #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
-        pub extern "C" fn #register_fn(vtable: *const #vtable_name) {
+        pub unsafe extern "C" fn #register_fn(vtable: *const #vtable_name) {
             #vtable_static.store(vtable as *mut _, std::sync::atomic::Ordering::Release);
         }
 

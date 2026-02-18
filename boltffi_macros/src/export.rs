@@ -231,24 +231,26 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
 
             if has_params {
                 quote! {
-                    #input
+                        #input
 
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #export_ident(
-                        #(#ffi_params),*
-                    ) -> ::boltffi::__private::FfiStatus {
-                        #body
+                        #[allow(clippy::not_unsafe_ptr_arg_deref)]
+                #[unsafe(no_mangle)]
+                        #fn_vis unsafe extern "C" fn #export_ident(
+                            #(#ffi_params),*
+                        ) -> ::boltffi::__private::FfiStatus {
+                            #body
+                        }
                     }
-                }
             } else {
                 quote! {
-                    #input
+                        #input
 
-                    #[unsafe(no_mangle)]
-                    #fn_vis extern "C" fn #export_ident() -> ::boltffi::__private::FfiStatus {
-                        #body
+                        #[allow(clippy::not_unsafe_ptr_arg_deref)]
+                #[unsafe(no_mangle)]
+                        #fn_vis extern "C" fn #export_ident() -> ::boltffi::__private::FfiStatus {
+                            #body
+                        }
                     }
-                }
             }
         }
         ReturnAbi::Scalar { .. } => {
@@ -264,24 +266,26 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
 
             if has_params {
                 quote! {
-                    #input
+                        #input
 
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #export_ident(
-                        #(#ffi_params),*
-                    ) #fn_output {
-                        #body
+                        #[allow(clippy::not_unsafe_ptr_arg_deref)]
+                #[unsafe(no_mangle)]
+                        #fn_vis unsafe extern "C" fn #export_ident(
+                            #(#ffi_params),*
+                        ) #fn_output {
+                            #body
+                        }
                     }
-                }
             } else {
                 quote! {
-                    #input
+                        #input
 
-                    #[unsafe(no_mangle)]
-                    #fn_vis extern "C" fn #export_ident() #fn_output {
-                        #body
+                        #[allow(clippy::not_unsafe_ptr_arg_deref)]
+                #[unsafe(no_mangle)]
+                        #fn_vis extern "C" fn #export_ident() #fn_output {
+                            #body
+                        }
                     }
-                }
             }
         }
         ReturnAbi::Encoded {
@@ -515,22 +519,22 @@ fn generate_async_export(
     let native_poll_fn = quote! {
         #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
-        #fn_vis extern "C" fn #poll_ident(
+        #fn_vis unsafe extern "C" fn #poll_ident(
             handle: ::boltffi::__private::RustFutureHandle,
             callback_data: u64,
             callback: ::boltffi::__private::RustFutureContinuationCallback,
         ) {
-            unsafe { ::boltffi::__private::rustfuture::rust_future_poll::<#rust_return_type>(handle, callback, callback_data) }
+            ::boltffi::__private::rustfuture::rust_future_poll::<#rust_return_type>(handle, callback, callback_data)
         }
     };
 
     let wasm_poll_fn = quote! {
         #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
-        #fn_vis extern "C" fn #poll_sync_ident(
+        #fn_vis unsafe extern "C" fn #poll_sync_ident(
             handle: ::boltffi::__private::RustFutureHandle,
         ) -> i32 {
-            unsafe { ::boltffi::__private::rust_future_poll_sync::<#rust_return_type>(handle) }
+            ::boltffi::__private::rust_future_poll_sync::<#rust_return_type>(handle)
         }
     };
 
@@ -560,13 +564,13 @@ fn generate_async_export(
         #wasm_complete_fn
 
         #[unsafe(no_mangle)]
-        #fn_vis extern "C" fn #cancel_ident(handle: ::boltffi::__private::RustFutureHandle) {
-            unsafe { ::boltffi::__private::rustfuture::rust_future_cancel::<#rust_return_type>(handle) }
+        #fn_vis unsafe extern "C" fn #cancel_ident(handle: ::boltffi::__private::RustFutureHandle) {
+            ::boltffi::__private::rustfuture::rust_future_cancel::<#rust_return_type>(handle)
         }
 
         #[unsafe(no_mangle)]
-        #fn_vis extern "C" fn #free_ident(handle: ::boltffi::__private::RustFutureHandle) {
-            unsafe { ::boltffi::__private::rustfuture::rust_future_free::<#rust_return_type>(handle) }
+        #fn_vis unsafe extern "C" fn #free_ident(handle: ::boltffi::__private::RustFutureHandle) {
+            ::boltffi::__private::rustfuture::rust_future_free::<#rust_return_type>(handle)
         }
     };
 
