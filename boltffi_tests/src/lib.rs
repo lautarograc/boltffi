@@ -2,6 +2,8 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::too_many_arguments)]
 
+use std::sync::Mutex;
+
 use boltffi::*;
 
 #[data]
@@ -562,7 +564,7 @@ pub struct TestCounter {
     value: i32,
 }
 
-#[export]
+#[export(single_threaded)]
 impl TestCounter {
     pub fn new(initial: i32) -> Self {
         Self { value: initial }
@@ -591,6 +593,37 @@ impl TestCounter {
     }
 }
 
+pub struct ThreadSafeCounter {
+    value: Mutex<i32>,
+}
+
+#[export]
+impl ThreadSafeCounter {
+    pub fn new(initial: i32) -> Self {
+        Self {
+            value: Mutex::new(initial),
+        }
+    }
+
+    pub fn get(&self) -> i32 {
+        *self.value.lock().unwrap()
+    }
+
+    pub fn set(&self, value: i32) {
+        *self.value.lock().unwrap() = value;
+    }
+
+    pub fn add(&self, amount: i32) -> i32 {
+        let mut guard = self.value.lock().unwrap();
+        *guard += amount;
+        *guard
+    }
+
+    pub fn increment(&self) -> i32 {
+        self.add(1)
+    }
+}
+
 pub struct ClassTestFixture {
     id: i32,
     name: String,
@@ -600,7 +633,7 @@ pub struct ClassTestFixture {
     optional: Option<i32>,
 }
 
-#[export]
+#[export(single_threaded)]
 impl ClassTestFixture {
     pub fn new_default() -> Self {
         Self {

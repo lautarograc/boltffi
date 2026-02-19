@@ -111,7 +111,7 @@ pub extern "C" fn boltffi_free_string(string: FfiString) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn boltffi_last_error_message(out: *mut FfiString) -> FfiStatus {
+pub unsafe extern "C" fn boltffi_last_error_message(out: *mut FfiString) -> FfiStatus {
     if out.is_null() {
         return FfiStatus::NULL_POINTER;
     }
