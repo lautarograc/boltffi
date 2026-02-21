@@ -418,9 +418,9 @@ fn pack_android(config: &Config, options: PackAndroidOptions, reporter: &Reporte
 }
 
 fn pack_java(config: &Config, options: PackJavaOptions, reporter: &Reporter) -> Result<()> {
-    if !config.is_java_enabled() {
+    if !config.is_java_jvm_enabled() {
         return Err(CliError::CommandFailed {
-            command: "targets.java.enabled = false".to_string(),
+            command: "targets.java.jvm.enabled = false".to_string(),
             status: None,
         });
     }
@@ -435,14 +435,7 @@ fn pack_java(config: &Config, options: PackJavaOptions, reporter: &Reporter) -> 
 
     if options.regenerate {
         let step = reporter.step("Generating C header");
-        run_generate_with_output(
-            config,
-            GenerateOptions {
-                target: GenerateTarget::Header,
-                output: Some(config.java_jvm_output().join("jni")),
-                experimental: false,
-            },
-        )?;
+        generate_java_header(config)?;
         step.finish_success();
 
         let step = reporter.step("Generating Java bindings");
@@ -465,6 +458,37 @@ fn pack_java(config: &Config, options: PackJavaOptions, reporter: &Reporter) -> 
     Ok(())
 }
 
+fn generate_java_header(config: &Config) -> Result<()> {
+    use boltffi_bindgen::cheader::CHeaderGenerator;
+    use boltffi_bindgen::scan_crate;
+
+    let output_dir = config.java_jvm_output().join("jni");
+    let output_path = output_dir.join(format!("{}.h", config.library_name()));
+
+    std::fs::create_dir_all(&output_dir).map_err(|source| CliError::CreateDirectoryFailed {
+        path: output_dir.clone(),
+        source,
+    })?;
+
+    let crate_dir = std::env::current_dir()
+        .and_then(|p| p.canonicalize())
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let crate_name = config.library_name();
+
+    let module = scan_crate(&crate_dir, crate_name).map_err(|e| CliError::CommandFailed {
+        command: format!("scan_crate: {}", e),
+        status: None,
+    })?;
+
+    let header_code = CHeaderGenerator::generate(&module);
+    std::fs::write(&output_path, header_code).map_err(|source| CliError::WriteFailed {
+        path: output_path,
+        source,
+    })?;
+
+    Ok(())
+}
+
 fn compile_jni_library(config: &Config, release: bool) -> Result<()> {
     let java_output = config.java_jvm_output();
     let jni_dir = java_output.join("jni");
@@ -478,24 +502,27 @@ fn compile_jni_library(config: &Config, release: bool) -> Result<()> {
         return Err(CliError::FileNotFound(header));
     }
 
+    let artifact_name = config.library_name().replace('-', "_");
+    let (lib_prefix, lib_ext, jni_platform, rpath_flag) = platform_lib_config()?;
+
     let profile_dir = if release { "release" } else { "debug" };
     let rust_lib = PathBuf::from("target")
         .join(profile_dir)
-        .join(format!("lib{}.dylib", config.library_name()));
+        .join(format!("{}{}.{}", lib_prefix, artifact_name, lib_ext));
 
     if !rust_lib.exists() {
         return Err(CliError::FileNotFound(rust_lib));
     }
 
-    let output_lib = java_output.join(format!("lib{}_jni.dylib", config.library_name()));
+    let output_lib = java_output.join(format!("{}{}_jni.{}", lib_prefix, artifact_name, lib_ext));
 
     let java_home = std::env::var("JAVA_HOME").map_err(|_| CliError::CommandFailed {
         command: "JAVA_HOME not set".to_string(),
         status: None,
     })?;
 
-    let status = Command::new("clang")
-        .arg("-shared")
+    let mut cmd = Command::new("clang");
+    cmd.arg("-shared")
         .arg("-fPIC")
         .arg("-o")
         .arg(&output_lib)
@@ -503,13 +530,16 @@ fn compile_jni_library(config: &Config, release: bool) -> Result<()> {
         .arg(&rust_lib)
         .arg(format!("-I{}", jni_dir.display()))
         .arg(format!("-I{}/include", java_home))
-        .arg(format!("-I{}/include/darwin", java_home))
-        .arg("-Wl,-rpath,@loader_path")
-        .status()
-        .map_err(|e| CliError::CommandFailed {
-            command: format!("clang: {}", e),
-            status: None,
-        })?;
+        .arg(format!("-I{}/include/{}", java_home, jni_platform));
+
+    if let Some(rpath) = rpath_flag {
+        cmd.arg(rpath);
+    }
+
+    let status = cmd.status().map_err(|e| CliError::CommandFailed {
+        command: format!("clang: {}", e),
+        status: None,
+    })?;
 
     if !status.success() {
         return Err(CliError::CommandFailed {
@@ -518,17 +548,34 @@ fn compile_jni_library(config: &Config, release: bool) -> Result<()> {
         });
     }
 
-    std::fs::copy(
-        &rust_lib,
-        java_output.join(format!("lib{}.dylib", config.library_name())),
-    )
-    .map_err(|e| CliError::CopyFailed {
+    let dest_lib = java_output.join(format!("{}{}.{}", lib_prefix, artifact_name, lib_ext));
+    std::fs::copy(&rust_lib, &dest_lib).map_err(|e| CliError::CopyFailed {
         from: rust_lib,
-        to: java_output.join(format!("lib{}.dylib", config.library_name())),
+        to: dest_lib,
         source: e,
     })?;
 
     Ok(())
+}
+
+fn platform_lib_config() -> Result<(
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+)> {
+    if cfg!(target_os = "macos") {
+        Ok(("lib", "dylib", "darwin", Some("-Wl,-rpath,@loader_path")))
+    } else if cfg!(target_os = "linux") {
+        Ok(("lib", "so", "linux", Some("-Wl,-rpath,$ORIGIN")))
+    } else if cfg!(target_os = "windows") {
+        Ok(("", "dll", "win32", None))
+    } else {
+        Err(CliError::CommandFailed {
+            command: "unsupported platform for JNI compilation".to_string(),
+            status: None,
+        })
+    }
 }
 
 fn build_jvm_native_library(config: &Config, release: bool, step: &Step) -> Result<()> {

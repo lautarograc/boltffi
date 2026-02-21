@@ -723,10 +723,6 @@ impl Config {
         &self.targets.android.kotlin.type_mappings
     }
 
-    pub fn is_java_enabled(&self) -> bool {
-        self.targets.java.jvm.enabled || self.targets.java.android.enabled
-    }
-
     pub fn is_java_jvm_enabled(&self) -> bool {
         self.targets.java.jvm.enabled
     }
@@ -739,7 +735,7 @@ impl Config {
         match target {
             Target::Swift => self.is_apple_enabled(),
             Target::Kotlin => self.is_android_enabled(),
-            Target::Java => self.is_java_enabled(),
+            Target::Java => self.is_java_jvm_enabled(),
             Target::TypeScript => self.is_wasm_enabled(),
             Target::Header => self.is_apple_enabled() || self.is_android_enabled(),
         }
