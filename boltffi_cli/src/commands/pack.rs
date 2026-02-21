@@ -4,8 +4,8 @@ use std::process::Command;
 use crate::build::{BuildOptions, Builder, OutputCallback, all_successful, failed_targets};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use crate::config::{
-    Config, SpmDistribution, SpmLayout, WasmNpmTarget, WasmOptimizeLevel, WasmOptimizeOnMissing,
-    WasmProfile,
+    Config, SpmDistribution, SpmLayout, Target, WasmNpmTarget, WasmOptimizeLevel,
+    WasmOptimizeOnMissing, WasmProfile,
 };
 use crate::error::{CliError, Result};
 use crate::pack::{AndroidPackager, SpmPackageGenerator, XcframeworkBuilder, compute_checksum};
@@ -17,12 +17,14 @@ pub enum PackCommand {
     Apple(PackAppleOptions),
     Android(PackAndroidOptions),
     Wasm(PackWasmOptions),
+    Java(PackJavaOptions),
 }
 
 pub struct PackAllOptions {
     pub release: bool,
     pub regenerate: bool,
     pub no_build: bool,
+    pub experimental: bool,
 }
 
 pub struct PackAppleOptions {
@@ -47,12 +49,19 @@ pub struct PackWasmOptions {
     pub no_build: bool,
 }
 
+pub struct PackJavaOptions {
+    pub release: bool,
+    pub regenerate: bool,
+    pub no_build: bool,
+}
+
 pub fn run_pack(config: &Config, command: PackCommand, reporter: &Reporter) -> Result<()> {
     match command {
         PackCommand::All(options) => pack_all(config, options, reporter),
         PackCommand::Apple(options) => pack_apple(config, options, reporter),
         PackCommand::Android(options) => pack_android(config, options, reporter),
         PackCommand::Wasm(options) => pack_wasm(config, options, reporter),
+        PackCommand::Java(options) => pack_java(config, options, reporter),
     }
 }
 
@@ -93,6 +102,19 @@ fn pack_all(config: &Config, options: PackAllOptions, reporter: &Reporter) -> Re
         pack_wasm(
             config,
             PackWasmOptions {
+                release: options.release,
+                regenerate: options.regenerate,
+                no_build: options.no_build,
+            },
+            reporter,
+        )?;
+        packed_any = true;
+    }
+
+    if config.should_process(Target::Java, options.experimental) {
+        pack_java(
+            config,
+            PackJavaOptions {
                 release: options.release,
                 regenerate: options.regenerate,
                 no_build: options.no_build,
@@ -271,6 +293,7 @@ fn pack_wasm(config: &Config, options: PackWasmOptions, reporter: &Reporter) -> 
             GenerateOptions {
                 target: GenerateTarget::Typescript,
                 output: Some(config.wasm_typescript_output()),
+                experimental: false,
             },
         )?;
         step.finish_success();
@@ -357,6 +380,7 @@ fn pack_android(config: &Config, options: PackAndroidOptions, reporter: &Reporte
             GenerateOptions {
                 target: GenerateTarget::Kotlin,
                 output: Some(config.android_kotlin_output()),
+                experimental: false,
             },
         )?;
         step.finish_success();
@@ -367,6 +391,7 @@ fn pack_android(config: &Config, options: PackAndroidOptions, reporter: &Reporte
             GenerateOptions {
                 target: GenerateTarget::Header,
                 output: Some(config.android_header_output()),
+                experimental: false,
             },
         )?;
         step.finish_success();
@@ -388,6 +413,142 @@ fn pack_android(config: &Config, options: PackAndroidOptions, reporter: &Reporte
     let step = reporter.step("Packaging jniLibs");
     packager.package()?;
     step.finish_success();
+
+    Ok(())
+}
+
+fn pack_java(config: &Config, options: PackJavaOptions, reporter: &Reporter) -> Result<()> {
+    if !config.is_java_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.java.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
+    reporter.section("☕", "Packing Java");
+
+    if !options.no_build {
+        let step = reporter.step("Building Rust cdylib");
+        build_jvm_native_library(config, options.release, &step)?;
+        step.finish_success();
+    }
+
+    if options.regenerate {
+        let step = reporter.step("Generating C header");
+        run_generate_with_output(
+            config,
+            GenerateOptions {
+                target: GenerateTarget::Header,
+                output: Some(config.java_jvm_output().join("jni")),
+                experimental: false,
+            },
+        )?;
+        step.finish_success();
+
+        let step = reporter.step("Generating Java bindings");
+        run_generate_with_output(
+            config,
+            GenerateOptions {
+                target: GenerateTarget::Java,
+                output: Some(config.java_jvm_output()),
+                experimental: true,
+            },
+        )?;
+        step.finish_success();
+    }
+
+    let step = reporter.step("Compiling JNI library");
+    compile_jni_library(config, options.release)?;
+    step.finish_success();
+
+    reporter.finish();
+    Ok(())
+}
+
+fn compile_jni_library(config: &Config, release: bool) -> Result<()> {
+    let java_output = config.java_jvm_output();
+    let jni_dir = java_output.join("jni");
+    let jni_glue = jni_dir.join("jni_glue.c");
+    let header = jni_dir.join(format!("{}.h", config.library_name()));
+
+    if !jni_glue.exists() {
+        return Err(CliError::FileNotFound(jni_glue));
+    }
+    if !header.exists() {
+        return Err(CliError::FileNotFound(header));
+    }
+
+    let profile_dir = if release { "release" } else { "debug" };
+    let rust_lib = PathBuf::from("target")
+        .join(profile_dir)
+        .join(format!("lib{}.dylib", config.library_name()));
+
+    if !rust_lib.exists() {
+        return Err(CliError::FileNotFound(rust_lib));
+    }
+
+    let output_lib = java_output.join(format!("lib{}_jni.dylib", config.library_name()));
+
+    let java_home = std::env::var("JAVA_HOME").map_err(|_| CliError::CommandFailed {
+        command: "JAVA_HOME not set".to_string(),
+        status: None,
+    })?;
+
+    let status = Command::new("clang")
+        .arg("-shared")
+        .arg("-fPIC")
+        .arg("-o")
+        .arg(&output_lib)
+        .arg(&jni_glue)
+        .arg(&rust_lib)
+        .arg(format!("-I{}", jni_dir.display()))
+        .arg(format!("-I{}/include", java_home))
+        .arg(format!("-I{}/include/darwin", java_home))
+        .arg("-Wl,-rpath,@loader_path")
+        .status()
+        .map_err(|e| CliError::CommandFailed {
+            command: format!("clang: {}", e),
+            status: None,
+        })?;
+
+    if !status.success() {
+        return Err(CliError::CommandFailed {
+            command: "clang failed to compile JNI library".to_string(),
+            status: status.code(),
+        });
+    }
+
+    std::fs::copy(&rust_lib, java_output.join(format!("lib{}.dylib", config.library_name())))
+        .map_err(|e| CliError::CopyFailed {
+            from: rust_lib,
+            to: java_output.join(format!("lib{}.dylib", config.library_name())),
+            source: e,
+        })?;
+
+    Ok(())
+}
+
+fn build_jvm_native_library(config: &Config, release: bool, step: &Step) -> Result<()> {
+    let on_output: Option<OutputCallback> = if step.is_verbose() {
+        Some(Box::new(print_cargo_line))
+    } else {
+        None
+    };
+
+    let options = BuildOptions {
+        release,
+        package: None,
+        on_output,
+    };
+
+    let builder = Builder::new(config, options);
+    let result = builder.build_host()?;
+
+    if !result.success {
+        return Err(CliError::BuildFailed {
+            targets: vec!["host".to_string()],
+        });
+    }
 
     Ok(())
 }
@@ -506,6 +667,7 @@ fn generate_apple_bindings(config: &Config, layout: SpmLayout, package_root: &Pa
         GenerateOptions {
             target: GenerateTarget::Swift,
             output: Some(swift_output_dir),
+            experimental: false,
         },
     )?;
 
@@ -514,6 +676,7 @@ fn generate_apple_bindings(config: &Config, layout: SpmLayout, package_root: &Pa
         GenerateOptions {
             target: GenerateTarget::Header,
             output: Some(config.apple_header_output()),
+            experimental: false,
         },
     )?;
 
