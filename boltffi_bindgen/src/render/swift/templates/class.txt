@@ -87,6 +87,10 @@
         ) { buf, status in
             guard status.code == 0 else { {{ prefix }}_free_buf(buf); throw FfiError(message: "ffi call failed") }
             defer { {{ prefix }}_free_buf(buf) }
+{%- if result.direct_buffer_is_data() %}
+            guard buf.len > 0, let ptr = buf.ptr else { return Data() }
+            return Data(bytes: ptr, count: Int(buf.len))
+{%- else %}
             guard buf.len > 0, let ptr = buf.ptr else { return [] }
             let count = Int(buf.len) / MemoryLayout<{{ result.direct_buffer_element_type().unwrap() }}>.stride
             let rawPtr = UnsafeRawPointer(ptr).assumingMemoryBound(to: {{ result.direct_buffer_element_type().unwrap() }}.self)
@@ -99,6 +103,7 @@
             return Array(UnsafeBufferPointer(start: UnsafeRawPointer(rawPtr).assumingMemoryBound(to: {{ enum_name }}.self), count: count))
 {%- else %}
             return Array(UnsafeBufferPointer(start: rawPtr, count: count))
+{%- endif %}
 {%- endif %}
         }
 {%- else %}
@@ -141,6 +146,10 @@
 {{ method.method_body_indent() }}let buf = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {{ method.method_body_indent() }}defer { {{ prefix }}_free_buf(buf) }
+{%- if method.returns.direct_buffer_is_data() %}
+{{ method.method_body_indent() }}guard buf.len > 0, let ptr = buf.ptr else { return Data() }
+{{ method.method_body_indent() }}return Data(bytes: ptr, count: Int(buf.len))
+{%- else %}
 {{ method.method_body_indent() }}guard buf.len > 0, let ptr = buf.ptr else { return [] }
 {{ method.method_body_indent() }}let count = Int(buf.len) / MemoryLayout<{{ method.returns.direct_buffer_element_type().unwrap() }}>.stride
 {{ method.method_body_indent() }}let rawPtr = UnsafeRawPointer(ptr).assumingMemoryBound(to: {{ method.returns.direct_buffer_element_type().unwrap() }}.self)
@@ -153,6 +162,7 @@
 {{ method.method_body_indent() }}return Array(UnsafeBufferPointer(start: UnsafeRawPointer(rawPtr).assumingMemoryBound(to: {{ enum_name }}.self), count: count))
 {%- else %}
 {{ method.method_body_indent() }}return Array(UnsafeBufferPointer(start: rawPtr, count: count))
+{%- endif %}
 {%- endif %}
 {%- elif method.returns.is_wire_encoded() %}
 {%- if method.needs_handle() %}

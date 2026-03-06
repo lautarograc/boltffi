@@ -3,9 +3,18 @@ use boltffi::__private::rustfuture::{self, RustFuturePoll};
 use boltffi_core::wire::{WireDecode, WireEncode};
 use boltffi_tests::*;
 
-fn decode_buf<T: WireDecode>(buf: &FfiBuf<u8>) -> T {
-    let (result, _) = T::decode_from(unsafe { buf.as_slice() }).unwrap();
+fn decode_buf<T: WireDecode>(buf: &FfiBuf) -> T {
+    let (result, _) = T::decode_from(unsafe { buf.as_byte_slice() }).unwrap();
     result
+}
+
+fn decode_i32_vec(buf: FfiBuf) -> Vec<i32> {
+    if buf.align() == core::mem::align_of::<i32>() {
+        unsafe { buf.into_vec::<i32>() }
+    } else {
+        let (result, _) = Vec::<i32>::decode_from(unsafe { buf.as_byte_slice() }).unwrap();
+        result
+    }
 }
 
 fn encode<T: WireEncode + boltffi_core::wire::WireSize>(value: &T) -> Vec<u8> {
@@ -600,8 +609,7 @@ mod fixture_wire_encoded_constructors {
         ]
         .iter()
         .for_each(|&status| {
-            let handle =
-                unsafe { boltffi_class_test_fixture_new_with_status(status as i32) };
+            let handle = unsafe { boltffi_class_test_fixture_new_with_status(status as i32) };
 
             let raw = unsafe { boltffi_class_test_fixture_get_status(handle) };
             let result: FixtureStatus = unsafe { std::mem::transmute(raw) };
@@ -688,7 +696,7 @@ mod fixture_wire_encoded_getters {
         let handle = boltffi_class_test_fixture_new_default();
 
         let buf = unsafe { boltffi_class_test_fixture_get_values(handle) };
-        let result: Vec<i32> = decode_buf(&buf);
+        let result: Vec<i32> = decode_i32_vec(buf);
         assert!(result.is_empty());
 
         unsafe { boltffi_class_test_fixture_free(handle) };
@@ -702,7 +710,7 @@ mod fixture_wire_encoded_getters {
         unsafe { boltffi_class_test_fixture_add_value(handle, 30) };
 
         let buf = unsafe { boltffi_class_test_fixture_get_values(handle) };
-        let result: Vec<i32> = decode_buf(&buf);
+        let result: Vec<i32> = decode_i32_vec(buf);
         assert_eq!(result, vec![10, 20, 30]);
 
         unsafe { boltffi_class_test_fixture_free(handle) };
@@ -821,7 +829,7 @@ mod fixture_wire_encoded_setters {
         unsafe { boltffi_class_test_fixture_set_values(handle, values.as_ptr(), values.len()) };
 
         let buf = unsafe { boltffi_class_test_fixture_get_values(handle) };
-        let result: Vec<i32> = decode_buf(&buf);
+        let result: Vec<i32> = decode_i32_vec(buf);
         assert_eq!(result, vec![100, 200, 300]);
 
         unsafe { boltffi_class_test_fixture_free(handle) };
@@ -836,7 +844,7 @@ mod fixture_wire_encoded_setters {
         unsafe { boltffi_class_test_fixture_set_values(handle, values.as_ptr(), values.len()) };
 
         let buf = unsafe { boltffi_class_test_fixture_get_values(handle) };
-        let result: Vec<i32> = decode_buf(&buf);
+        let result: Vec<i32> = decode_i32_vec(buf);
         assert!(result.is_empty());
 
         unsafe { boltffi_class_test_fixture_free(handle) };
@@ -934,9 +942,7 @@ mod fixture_wire_encoded_static {
         ]
         .iter()
         .for_each(|&status| {
-            let raw = unsafe {
-                boltffi_class_test_fixture_static_identity_status(status as i32)
-            };
+            let raw = unsafe { boltffi_class_test_fixture_static_identity_status(status as i32) };
             let result: FixtureStatus = unsafe { std::mem::transmute(raw) };
             assert_eq!(result, status);
         });
